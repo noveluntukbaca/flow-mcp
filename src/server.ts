@@ -1,12 +1,14 @@
 import { randomBytes } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { basename, extname, join, resolve, sep } from "node:path";
+import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { CACHE_DIR as CAPTIONS_DIR } from "./captions.js";
 import { HOME_DIR } from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
+
+import { openMedia, safePath } from "./paths.js";
 
 export const PORT = Number(process.env.FLOW_MCP_PORT ?? 8787);
 export const TOKEN_FILE = join(HOME_DIR, "token");
@@ -41,21 +43,41 @@ function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   });
 }
 
-const inside = (file: string, dir: string) => resolve(file).startsWith(resolve(dir) + sep);
-
 function sendMedia(req: IncomingMessage, res: ServerResponse, file: string) {
-  if (!(inside(file, OUTPUT_ROOT) || inside(file, UPLOAD_DIR) || inside(file, CAPTIONS_DIR)) || !existsSync(file)) return json(res, 404, { error: "Not found." });
-  const { size } = statSync(file);
+  let media;
+  try {
+    const roots = [OUTPUT_ROOT];
+    for (const root of [UPLOAD_DIR, CAPTIONS_DIR]) {
+      try { roots.push(safePath(HOME_DIR, root)); } catch { /* Never trust a relocated state subfolder. */ }
+    }
+    media = openMedia(file, roots);
+  }
+  catch { return json(res, 404, { error: "Not found." }); }
+  const { fd, size } = media;
   const type = MIME[extname(file).toLowerCase()] ?? "application/octet-stream";
-  const range = req.headers.range?.match(/bytes=(\d*)-(\d*)/);
-  if (range) {
-    const start = range[1] ? Number(range[1]) : 0;
-    const end = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+  const stream = (start?: number, end?: number) => {
+    const source = createReadStream(file, { fd, autoClose: true, start, end });
+    res.once("close", () => source.destroy());
+    return source.on("error", () => res.destroy()).pipe(res);
+  };
+  if (req.headers.range) {
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+    let start = NaN, end = NaN;
+    if (range && (range[1] || range[2])) {
+      start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+      if (!range[1] && Number(range[2]) === 0) start = NaN;
+    }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) {
+      closeSync(fd);
+      res.writeHead(416, { "content-range": `bytes */${size}` });
+      return res.end();
+    }
     res.writeHead(206, { "content-type": type, "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1 });
-    return createReadStream(file, { start, end }).pipe(res);
+    return stream(start, end);
   }
   res.writeHead(200, { "content-type": type, "accept-ranges": "bytes", "content-length": size });
-  createReadStream(file).pipe(res);
+  stream();
 }
 
 export type ServerRole = "owner" | "client" | "none";
@@ -63,7 +85,7 @@ export type ServerRole = "owner" | "client" | "none";
 // Serves the Studio panel and a JSON API on localhost. Returns "client" when another flow-mcp process already
 // owns the port (that process owns the Flow tab and the queue), "none" when the port is taken by something else.
 export async function startServer(core: Core): Promise<ServerRole> {
-  mkdirSync(UPLOAD_DIR, { recursive: true });
+  mkdirSync(safePath(HOME_DIR, UPLOAD_DIR), { recursive: true });
   const token = randomBytes(24).toString("hex");
   const allowedHosts = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 
@@ -87,13 +109,14 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
       if (req.method === "POST" && url.pathname === "/api/upload") {
         const name = basename(url.searchParams.get("name") ?? "upload").replace(/[^\w.-]+/g, "_");
-        const path = join(UPLOAD_DIR, `${randomBytes(4).toString("hex")}-${name}`);
-        writeFileSync(path, await readBody(req, MAX_UPLOAD));
+        const path = join(UPLOAD_DIR, `${randomBytes(16).toString("hex")}-${name.slice(0, 160)}`);
+        const body = await readBody(req, MAX_UPLOAD);
+        writeFileSync(safePath(HOME_DIR, path), body, { flag: "wx", mode: 0o600 });
         return json(res, 200, { path });
       }
 
       const method = url.pathname.match(/^\/api\/(\w+)$/)?.[1] as keyof Core | undefined;
-      if (req.method === "POST" && method && typeof core[method] === "function") {
+      if (req.method === "POST" && method && Object.hasOwn(shapes, method) && typeof core[method] === "function") {
         const raw = (await readBody(req, 1024 * 1024)).toString() || "{}";
         const shape = (shapes as Record<string, z.ZodRawShape>)[method];
         const args = shape ? z.object(shape).parse(JSON.parse(raw)) : undefined;
@@ -112,7 +135,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
   });
   if (listening) {
     mkdirSync(HOME_DIR, { recursive: true });
-    writeFileSync(TOKEN_FILE, token, { mode: 0o600 });
+    writeFileSync(safePath(HOME_DIR, TOKEN_FILE), token, { mode: 0o600 });
     return "owner";
   }
   // The port is taken. Who has it matters enormously: becoming a second LOCAL core means two processes drive the same

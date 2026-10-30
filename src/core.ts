@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { assemble, localVoices, speakLocally, voiceTrack } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
@@ -11,10 +10,15 @@ import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
-export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
+import { OUTPUT_ROOT, localName, outputPath, projectPath } from "./paths.js";
+export { OUTPUT_ROOT } from "./paths.js";
 const words = (s: string) => s.split(/[^a-z0-9]+/i).filter((w) => w.length > 3).map((w) => w.toLowerCase());
 
-export const projectDir = (project: string) => resolve(OUTPUT_ROOT, project.replace(/[^\w.-]+/g, "_"));
+export const projectDir = projectPath;
+
+const projectName = z.string().min(1).refine((name) => {
+  try { localName(name); return true; } catch { return false; }
+}, "Invalid project name: use a single portable folder name.");
 
 const sceneSchema = z.object({
   prompt: z.string().min(1).describe("Full English prompt for one clip: action, shot and camera move, location, style, light, sound."),
@@ -95,7 +99,7 @@ const captionFields = {
 export const shapes = {
   status: { detailed: z.boolean().default(true).describe("false skips the plan/credits readout, which briefly opens Flow's account panel.") },
   generate: {
-    project: z.string().min(1).describe("Folder name for the downloaded clips, e.g. 'HotelPromo'."),
+    project: projectName.describe("Folder name for the downloaded clips, e.g. 'HotelPromo'."),
     scenes: z.array(sceneSchema).min(1).max(100),
   },
   wait: {
@@ -106,12 +110,12 @@ export const shapes = {
   retry: { job_ids: z.array(z.string()).optional().describe("Jobs to re-queue. Default: every failed job.") },
   assets: { kind: z.enum(["image", "video", "scene"]).optional() },
   download: {
-    project: z.string().min(1).describe("Local folder name under the output root."),
+    project: projectName.describe("Local folder name under the output root."),
     assets: z.array(z.string().min(1)).min(1).max(30).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
     quality: z.enum(["original", "upscaled"]).default("original"),
   },
   assemble: {
-    project: z.string().min(1).describe("Same project name used in flow_generate."),
+    project: projectName.describe("Same project name used in flow_generate."),
     clips: z.array(z.string()).optional().describe("Absolute clip paths in play order. Default: every scene-NN.mp4 in the project folder (first variant of each)."),
     music: z.string().optional().describe("Absolute path to a music file; looped and trimmed to the film length."),
     music_volume: z.number().min(0).max(1).default(0.25),
@@ -148,11 +152,11 @@ export const shapes = {
   caption_preview: captionFields,
   captions: {
     ...captionFields,
-    project: z.string().optional().describe("Films folder to save into. Default: the video's own folder when it is already in the films folder, otherwise 'Captions'."),
+    project: projectName.optional().describe("Films folder to save into. Default: the video's own folder when it is already in the films folder, otherwise 'Captions'."),
   },
   caption_setup: {},
   agent: {
-    project: z.string().min(1).describe("Folder name for the downloaded images."),
+    project: projectName.describe("Folder name for the downloaded images."),
     scenes: z.array(z.string().min(1)).min(1).max(50).describe("One image description per scene, in order."),
     aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).default("16:9"),
     download_quality: z.enum(["original", "upscaled"]).optional(),
@@ -175,7 +179,7 @@ export const shapes = {
   },
   voices: {},
   narrate: {
-    project: z.string().min(1).describe("Folder for the narration audio."),
+    project: projectName.describe("Folder for the narration audio."),
     engine: z
       .enum(["gemini", "mac"])
       .default("gemini")
@@ -187,7 +191,7 @@ export const shapes = {
     style: z.string().max(200).optional().describe("Delivery note for the 'gemini' engine, e.g. 'slowly and warmly, like a documentary narrator'."),
   },
   edit: {
-    project: z.string().min(1).describe("Local folder for the edited clip."),
+    project: projectName.describe("Local folder for the edited clip."),
     asset: z.string().min(1).describe("Title (or title prefix) of a video already in the Flow project; see flow_assets."),
     prompt: z.string().min(1).describe("What to change, e.g. 'change the time of day to golden hour', 'remove the cup', 'make it snow'."),
     acknowledge_cost: z
@@ -196,7 +200,7 @@ export const shapes = {
     download_quality: z.enum(["original", "upscaled"]).optional(),
   },
   continue_shot: {
-    project: z.string().min(1).describe("Local folder for the new clip."),
+    project: projectName.describe("Local folder for the new clip."),
     from_asset: z.string().min(1).describe("Title (or title prefix) of the video to continue from; see flow_assets."),
     prompt: z.string().min(1).describe("What happens in the new clip, written as one continuous shot with one camera move."),
     attach: z
@@ -332,6 +336,8 @@ const BUSY = "A generation is running in the Flow tab. Wait for it to finish (fl
 
 export class LocalCore implements Core {
   private queue: JobQueue = new JobQueue(async (job) => {
+    outputPath(job.params.output_dir);
+    localName(job.params.file_stem);
     const { chain_from, reference_from } = job.params;
     if (reference_from) {
       const still = this.queue.get(reference_from)?.files.find((f) => /\.(jpe?g|png|webp)$/i.test(f));
@@ -479,7 +485,7 @@ export class LocalCore implements Core {
     const dir = projectDir(project);
     if (!voice_lines?.length) return assemble({ dir, ...rest });
     mkdirSync(dir, { recursive: true });
-    const track = await voiceTrack(voice_lines, join(dir, `${rest.output_name.replace(/[^\w.-]+/g, "_")}-voice.wav`));
+    const track = await voiceTrack(voice_lines, outputPath(join(dir, `${localName(rest.output_name)}-voice.wav`)));
     const film = await assemble({ dir, ...rest, voiceover: track.file });
     return { ...film, voice: track };
   }
@@ -502,8 +508,8 @@ export class LocalCore implements Core {
 
   async captions({ project, ...a }: Args<"captions">) {
     // Save next to the video when it is already one of the user's films, otherwise in a Captions folder.
-    const rel = relative(OUTPUT_ROOT, dirname(a.video));
-    const inFilms = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+    let inFilms = false;
+    try { outputPath(a.video); inFilms = true; } catch { /* External inputs remain supported; output goes to Captions. */ }
     const dir = project ? projectDir(project) : inFilms ? dirname(a.video) : projectDir("Captions");
     mkdirSync(dir, { recursive: true });
     return burnCaptions(a.video, a, captionedName(dir, a.video));
@@ -518,11 +524,17 @@ export class LocalCore implements Core {
     if (!existsSync(OUTPUT_ROOT)) return { root: OUTPUT_ROOT, projects: [] };
     const media = /\.(mp4|webm|mov|gif|jpe?g|png|webp|m4a|mp3|wav|aiff?)$/i;
     const projects = readdirSync(OUTPUT_ROOT, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
+      .filter((d) => {
+        if (!d.isDirectory()) return false;
+        try { outputPath(join(OUTPUT_ROOT, d.name)); return true; } catch { return false; }
+      })
       .map((d) => {
         const dir = join(OUTPUT_ROOT, d.name);
         const files = readdirSync(dir)
-          .filter((f) => media.test(f) && !f.endsWith("-lastframe.jpg"))
+          .filter((f) => {
+            if (!media.test(f) || f.endsWith("-lastframe.jpg")) return false;
+            try { return statSync(outputPath(join(dir, f))).isFile(); } catch { return false; }
+          })
           .map((f) => ({ name: f, path: join(dir, f), kind: /\.(mp4|webm|mov)$/i.test(f) ? "video" : /\.(m4a|mp3|wav|aiff?)$/i.test(f) ? "audio" : "image", mtime: statSync(join(dir, f)).mtimeMs }))
           .sort((a, b) => a.name.localeCompare(b.name));
         return { name: d.name, dir, files, mtime: Math.max(0, ...files.map((f) => f.mtime)) };
@@ -572,6 +584,7 @@ export class LocalCore implements Core {
 
   // Flow's composer takes a start frame OR a character, never both; agent mode takes both, so this goes that way.
   async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, mode, download_quality, force }: Args<"continue_shot">) {
+    const output_dir = projectDir(project);
     // A lost queue entry is not proof that nothing ran: when the owner process is replaced mid-job the job vanishes
     // while Flow carries on and charges for it. Re-running then spends twice, which is exactly what happened on
     // 2026-09-20. Flow's own grid is the only honest record, so ask it before starting another paid generation.
@@ -589,7 +602,6 @@ export class LocalCore implements Core {
         );
       }
     }
-    const output_dir = projectDir(project);
     const job = this.queue.add({
       prompt,
       type: "video",
@@ -608,10 +620,7 @@ export class LocalCore implements Core {
   // Moves a file or a project folder from the films folder to the system's bin - recoverable from there, never
   // erased. Anything outside the films folder is refused, so a bad path can never reach the rest of the Mac.
   async discard({ path }: Args<"discard">) {
-    const target = resolve(path);
-    // relative() works with either separator; a path that climbs out ("..") or lands on another drive is refused.
-    const rel = relative(OUTPUT_ROOT, target);
-    if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error("Only things inside your films folder can be moved to the bin from here.");
+    const target = outputPath(path);
     if (!existsSync(target)) throw new Error("That file is already gone.");
     return { trashed: target, to: moveToBin(target), bin: BIN };
   }

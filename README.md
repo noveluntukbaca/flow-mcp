@@ -250,6 +250,23 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
 
 ---
 
+## Offline development tests
+
+```bash
+npm ci --include=dev --include=optional --no-audit --no-fund
+npm test
+npm audit
+```
+
+`npm test` builds the project and runs automated offline security, HTTP/MCP and queue tests.
+It does not sign in to Google, generate media through Flow, or use video credits. An optional
+synthetic-media test runs when FFmpeg and ffprobe are available; otherwise that test is reported
+as skipped. Windows CI tests junctions without requiring Developer Mode; file-symlink cases
+that need special Windows privileges are reported as skipped. The manual `scripts/e2e.mjs`
+script is separate and must not be used for offline testing.
+
+Security changes and remaining limits are documented in [docs/SECURITY_HARDENING.md](docs/SECURITY_HARDENING.md).
+
 ## Updating
 
 Tell your assistant: *"Update Flow MCP: in my flow-mcp folder, run git pull, then npm install, then npm run

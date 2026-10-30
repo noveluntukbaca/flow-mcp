@@ -14,6 +14,8 @@ import { FFMPEG_HINT, IS_MAC, IS_WIN } from "./platform.js";
 // does the drawing because Homebrew's ffmpeg is built without any text filter (no ass, subtitles or drawtext), and
 // Chrome is already a requirement - so the same code runs on a Mac and on Windows with nothing extra to install.
 
+import { localName, outputPath, safePath } from "./paths.js";
+
 const run = promisify(execFile);
 const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
 const FFPROBE = process.env.FLOW_MCP_FFPROBE ?? "ffprobe";
@@ -189,14 +191,14 @@ function fetchModel(kind: SpeechModel): Promise<string> {
   const pending = fetching.get(kind);
   if (pending) return pending;
   const job = (async () => {
-    const dest = join(MODEL_DIR, file);
+    const dest = safePath(HOME_DIR, join(MODEL_DIR, file));
     if (existsSync(dest)) return dest;
-    mkdirSync(MODEL_DIR, { recursive: true });
+    mkdirSync(safePath(HOME_DIR, MODEL_DIR), { recursive: true });
     // curl, not fetch: Node's built-in fetch can crash the whole process on an assertion (undici, "assert(!this.paused)")
     // when a server closes the connection mid-stream - seen while testing this, and here that process is the panel or
     // Claude's connector. curl ships with macOS and Windows 10+, follows the redirect to the download host, and can
     // only fail itself.
-    const part = `${dest}.part`;
+    const part = safePath(HOME_DIR, `${dest}.part`);
     await run("curl", ["-L", "--fail", "--silent", "--show-error", "--connect-timeout", "20", "--retry", "2", "-o", part, `${MODEL_BASE}/${file}`], BIG).catch((err: RunError) => {
       rmSync(part, { force: true });
       throw new Error(err.code === "ENOENT" ? "curl is not installed" : String(err.stderr || err.message).trim().split("\n").at(-1));
@@ -336,10 +338,10 @@ export async function transcribe(video: string, language = "auto"): Promise<Tran
   const asked = language.trim().toLowerCase() || "auto";
   if (!/^(auto|[a-z]{2,3})$/.test(asked)) throw new Error(`"${language}" isn't a language code. Use a code such as en, es or ja, or auto.`);
   const st = statSync(video);
-  const cacheFile = (...parts: string[]) => join(CACHE_DIR, `${createHash("sha1").update([video, st.size, st.mtimeMs, ...parts].join("|")).digest("hex").slice(0, 16)}.json`);
+  const cacheFile = (...parts: string[]) => safePath(HOME_DIR, join(CACHE_DIR, `${createHash("sha1").update([video, st.size, st.mtimeMs, ...parts].join("|")).digest("hex").slice(0, 16)}.json`));
   const keep = (t: Transcript, ...files: (string | undefined)[]) => {
-    mkdirSync(CACHE_DIR, { recursive: true });
-    for (const f of files) if (f) writeFileSync(f, JSON.stringify(t));
+    mkdirSync(safePath(HOME_DIR, CACHE_DIR), { recursive: true });
+    for (const f of files) if (f) writeFileSync(safePath(HOME_DIR, f), JSON.stringify(t));
     return t;
   };
   // "auto" is remembered on its own, so the language is detected once per video, not on every preview.
@@ -643,12 +645,12 @@ export async function previewCaptions(video: string, o: CaptionOptions): Promise
   const state = states.find((s) => mid && s.from <= mid.start + 0.01 && s.to > mid.start && s.scale === 1) ?? states.find((s) => s.scale === 1);
   const at = state ? (state.from + state.to) / 2 : Math.min(1, info.duration / 2);
 
-  mkdirSync(CACHE_DIR, { recursive: true });
+  mkdirSync(safePath(HOME_DIR, CACHE_DIR), { recursive: true });
   const key = createHash("sha1").update(video).digest("hex").slice(0, 12);
-  const frame = join(CACHE_DIR, `frame-${key}.jpg`);
+  const frame = safePath(HOME_DIR, join(CACHE_DIR, `frame-${key}.jpg`));
   await run(FFMPEG, ["-v", "error", "-y", "-ss", at.toFixed(3), "-i", video, "-frames:v", "1", "-q:v", "3", frame], BIG);
   const background = `data:image/jpeg;base64,${readFileSync(frame).toString("base64")}`;
-  const image = join(CACHE_DIR, `preview-${key}.jpg`);
+  const image = safePath(HOME_DIR, join(CACHE_DIR, `preview-${key}.jpg`));
   await withPage(info.width, info.height, pageHtml(o.style, { ...info, position: o.position, size: o.size, color: pickColor(o), letters: lettersOf(o), lang, names: namesIn(words, o.names), background }), async (p) => {
     if (state) await p.evaluate((s) => (window as unknown as { paint: (s: unknown) => void }).paint(s), state);
     await p.screenshot({ path: image, type: "jpeg", quality: 85 });
@@ -675,6 +677,8 @@ export interface CaptionResult {
 }
 
 export async function burnCaptions(video: string, o: CaptionOptions, output: string): Promise<CaptionResult> {
+  outputPath(output);
+  outputPath(output.replace(/\.[^.]+$/, ".srt"));
   const info = await probe(video);
   const { transcript, words } = await timedWords(video, o);
   const lang = transcript.language;
@@ -749,9 +753,9 @@ export async function burnCaptions(video: string, o: CaptionOptions, output: str
 
 // "clip.mp4" -> "<dir>/clip-captions.mp4", then -captions-2 and so on, so nothing is ever overwritten.
 export function captionedName(dir: string, video: string): string {
-  const stem = basename(video, extname(video)).replace(/[^\w.-]+/g, "_");
+  const stem = localName(basename(video, extname(video)));
   for (let i = 1; ; i++) {
-    const out = join(dir, `${stem}-captions${i > 1 ? `-${i}` : ""}.mp4`);
+    const out = outputPath(join(dir, `${stem}-captions${i > 1 ? `-${i}` : ""}.mp4`));
     if (!existsSync(out)) return out;
   }
 }

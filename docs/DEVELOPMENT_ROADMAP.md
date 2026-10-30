@@ -1,5 +1,7 @@
 # Roadmap Flow MCP Studio
 
+> Snapshot audit TASK 01. Untuk perbaikan TASK 02, hasil test terkini dan risiko tersisa, lihat [SECURITY_HARDENING.md](SECURITY_HARDENING.md).
+
 Tujuan: aplikasi desktop Windows 10/11 dengan backend Flow MCP yang dapat diuji, pengeluaran kredit eksplisit, distribusi aman dan alur lokal yang tetap berguna tanpa login. Audit dokumentasi ini tidak mengubah fungsi utama. Prioritas berdasar [temuan arsitektur](ARCHITECTURE.md) dan [matriks Windows](WINDOWS_COMPATIBILITY.md).
 
 ## Tahap 0 — baseline dan keputusan produk

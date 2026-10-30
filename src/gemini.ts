@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { HOME_DIR } from "./chrome.js";
+
+import { outputPath, safePath } from "./paths.js";
 
 const run = promisify(execFile);
 const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
@@ -31,7 +33,7 @@ export const GEMINI_VOICES = [
 // A key is one unbroken run of characters - older AI Studio keys start "AIza", newer ones "AQ" (2026-10). Anything
 // shorter or still holding template text is not a key.
 export const geminiKey = (): string | undefined => {
-  const key = (process.env.GEMINI_API_KEY ?? (existsSync(KEY_FILE) ? readFileSync(KEY_FILE, "utf8") : "")).trim();
+  const key = (process.env.GEMINI_API_KEY ?? (existsSync(KEY_FILE) ? readFileSync(safePath(HOME_DIR, KEY_FILE), "utf8") : "")).trim();
   if (!key || key.length < 20 || /^(YOUR|PASTE|<|\$)/i.test(key) || /_KEY|KEY_HERE|EXAMPLE/i.test(key)) return undefined;
   return key;
 };
@@ -51,8 +53,8 @@ export async function saveGeminiKey(raw: string): Promise<{ saved: true; ending:
   if (!res) throw new Error("Couldn't reach Google to check the key. Check your internet connection and try again.");
   if (!res.ok) throw new Error("Google didn't accept that key. Copy it again from aistudio.google.com/apikey. Your previous key, if any, is unchanged.");
   mkdirSync(dirname(KEY_FILE), { recursive: true });
-  writeFileSync(KEY_FILE, key, { mode: 0o600 });
-  chmodSync(KEY_FILE, 0o600);
+  writeFileSync(safePath(HOME_DIR, KEY_FILE), key, { mode: 0o600 });
+  chmodSync(safePath(HOME_DIR, KEY_FILE), 0o600);
   return { saved: true, ending: key.slice(-4) };
 }
 
@@ -62,9 +64,10 @@ interface TtsPart {
 
 // Speaks a line with Gemini's TTS. Free tier, no Flow credits, no length cap, and the same voices Flow uses.
 export async function speakWithGemini(text: string, voice: string, target: string, style?: string): Promise<{ output: string; duration: number }> {
+  outputPath(target);
   const key = geminiKey();
   if (!key) {
-    const placeholder = existsSync(KEY_FILE) && readFileSync(KEY_FILE, "utf8").trim().length > 0;
+    const placeholder = existsSync(KEY_FILE) && readFileSync(safePath(HOME_DIR, KEY_FILE), "utf8").trim().length > 0;
     throw new Error(
       (placeholder
         ? `The key file still holds placeholder text, not a key.\n\n`
@@ -92,14 +95,13 @@ export async function speakWithGemini(text: string, voice: string, target: strin
   // The audio comes back as raw signed 16-bit PCM, so the sample rate has to come from the mime type.
   const rate = Number(part.inlineData.mimeType?.match(/rate=(\d+)/)?.[1] ?? 24000);
   const raw = target.replace(/\.\w+$/, "") + ".pcm";
-  writeFileSync(raw, Buffer.from(part.inlineData.data, "base64"));
+  writeFileSync(outputPath(raw), Buffer.from(part.inlineData.data, "base64"));
   await run(FFMPEG, [
     "-y", "-f", "s16le", "-ar", String(rate), "-ac", "1", "-i", raw,
     "-af", "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target,
   ]);
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
   const duration = Number(stdout.trim());
-  writeFileSync(raw, "");
-  await run("rm", ["-f", raw]).catch(() => {});
+  rmSync(outputPath(raw), { force: true });
   return { output: target, duration };
 }

@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 
+import { safePath } from "./paths.js";
+
 export const FLOW_URL = "https://flow.google.com/";
 // Flow's buttons are found by their English names ("Start generation", "Download"...), so Flow has to show in English
 // whatever language the Google account uses. `hl=en` on the address does that: `hl=es` turned every label Spanish on
@@ -51,7 +53,7 @@ export function chromeExecutable(): string {
 
 async function launchChrome(): Promise<void> {
   const chromePath = chromeExecutable();
-  mkdirSync(PROFILE_DIR, { recursive: true });
+  mkdirSync(safePath(HOME_DIR, PROFILE_DIR), { recursive: true });
   const child = spawn(
     chromePath,
     [

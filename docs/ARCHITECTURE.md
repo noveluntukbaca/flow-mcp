@@ -1,5 +1,7 @@
 # Audit arsitektur Flow MCP untuk Flow MCP Studio
 
+> Snapshot audit TASK 01. Untuk perbaikan TASK 02, hasil test terkini dan risiko tersisa, lihat [SECURITY_HARDENING.md](SECURITY_HARDENING.md).
+
 Audit: 30 Oktober 2026. Basis sumber: `84b548f3aa72b749b82cdbfbb6f91cadebae8642`.
 Target produk: aplikasi desktop **Flow MCP Studio** untuk Windows 10/11.
 Perubahan audit ini hanya dokumentasi; fungsi utama, manifest, dan lockfile tidak diubah.

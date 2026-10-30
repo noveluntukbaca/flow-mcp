@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 
 import { FFMPEG_HINT, IS_WIN, powershell, psQuote } from "./platform.js";
 
+import { localName, outputDirectory, outputPath } from "./paths.js";
+
 const run = promisify(execFile);
 const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
 const FFPROBE = process.env.FLOW_MCP_FFPROBE ?? "ffprobe";
@@ -66,6 +68,7 @@ function defaultClips(dir: string): string[] {
 
 // Pulls the spoken track out of a generated clip so Flow's voices can be used as narration.
 export async function extractAudio(video: string, target: string): Promise<{ output: string; duration: number }> {
+  outputPath(target);
   await run(FFMPEG, ["-y", "-i", video, "-vn", "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
   const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
   return { output: target, duration: Number(stdout.trim()) };
@@ -102,12 +105,14 @@ export async function localVoices(): Promise<{ name: string; description: string
 
 // Speaks a line with this computer's own voice. Free and instant, but only as good as the installed voice.
 export async function speakLocally(text: string, voice: string, target: string): Promise<{ output: string; duration: number }> {
+  outputPath(target);
   const stem = target.replace(/\.\w+$/, "");
   const raw = stem + (IS_WIN ? ".wav" : ".aiff");
+  outputPath(raw);
   if (IS_WIN) {
     // The line goes through a file, never the command line, so quotes or symbols in it cannot break the script.
     const lineFile = stem + ".line.txt";
-    writeFileSync(lineFile, text, "utf8");
+    writeFileSync(outputPath(lineFile), text, "utf8");
     try {
       powershell(
         `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SelectVoice(${psQuote(voice)}); $s.SetOutputToWaveFile(${psQuote(raw)}); $s.Speak([System.IO.File]::ReadAllText(${psQuote(lineFile)}, [System.Text.Encoding]::UTF8)); $s.Dispose()`,
@@ -138,6 +143,7 @@ export interface VoiceLine {
 // take at its own pace and cannot time a word to an on-screen title, so the timing is done here instead: 2026-10-12,
 // a narration in the user's own Flow voice had to land each line on the kinetic text it describes.
 export async function voiceTrack(lines: VoiceLine[], out: string): Promise<{ file: string; lines: { at: number; seconds: number; speed: number }[]; warnings: string[] }> {
+  outputPath(out);
   if (!lines.length) throw new Error("No voice lines given.");
   const work = mkdtempSync(join(tmpdir(), "flow-voice-"));
   try {
@@ -201,9 +207,10 @@ export async function voiceTrack(lines: VoiceLine[], out: string): Promise<{ fil
 
 // Joins the scene clips into one film, keeping their own sound and laying music / voiceover on top.
 export async function assemble(o: AssembleOptions): Promise<{ output: string; clips: string[]; duration: number; held_last_frame: number }> {
+  outputDirectory(o.dir);
   // Clips can now come from anywhere, so the project folder the film is saved into may not exist yet.
   if (o.clips?.length) mkdirSync(o.dir, { recursive: true });
-  const out = join(o.dir, o.output_name.replace(/[^\w.-]+/g, "_").replace(/(\.mp4)?$/, ".mp4"));
+  const out = outputPath(join(o.dir, localName(o.output_name).replace(/(\.mp4)?$/, ".mp4")));
   const clips = (o.clips?.length ? o.clips : defaultClips(o.dir)).filter((c) => c !== out);
   if (!clips.length) throw new Error(`No clips found in ${o.dir}. Generate or download a clip first, or pass clips explicitly.`);
   for (const f of [...clips, o.music, o.voiceover]) if (f && !existsSync(f)) throw new Error(`File not found: ${f}`);

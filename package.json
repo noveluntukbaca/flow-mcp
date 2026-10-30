@@ -4,7 +4,7 @@
   "description": "Local MCP server that drives Google Flow in a dedicated Chrome profile",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm run build && node --test --test-concurrency=1",
     "build": "tsc",
     "start": "node dist/index.js",
     "login": "node dist/login.js",
@@ -18,9 +18,10 @@
     "flow-mcp": "dist/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "fflate": "^0.8.3",
     "playwright-core": "^1.63.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

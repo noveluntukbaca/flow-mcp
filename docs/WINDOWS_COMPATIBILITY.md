@@ -1,5 +1,7 @@
 # Kompatibilitas Windows 10/11
 
+> Snapshot audit TASK 01. Untuk perbaikan TASK 02, hasil test terkini dan risiko tersisa, lihat [SECURITY_HARDENING.md](SECURITY_HARDENING.md).
+
 Status per 30 Oktober 2026: **belum tervalidasi pada Windows**. Audit statis menemukan implementasi Windows, dan build/smoke backend lulus di Linux. Tidak ada installer Flow MCP Studio yang dihasilkan oleh repository saat ini. Target awal yang disarankan Windows x64; ARM64 perlu pengujian dan artefak tersendiri. Tentukan versi minimum/build Windows secara eksplisit sebelum rilis, termasuk kebijakan OS yang sudah di luar dukungan reguler vendor.
 
 ## Matriks kesiapan

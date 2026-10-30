@@ -2,11 +2,14 @@ import { readFileSync } from "node:fs";
 import type { Core } from "./core.js";
 import { PORT, TOKEN_FILE } from "./server.js";
 
+import { HOME_DIR } from "./chrome.js";
+import { safePath } from "./paths.js";
+
 // Used when another flow-mcp process (Studio or a second Claude client) already owns the Flow tab and queue.
 async function call(method: string, args: unknown): Promise<unknown> {
   const res = await fetch(`http://127.0.0.1:${PORT}/api/${method}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-flow-token": readFileSync(TOKEN_FILE, "utf8").trim() },
+    headers: { "content-type": "application/json", "x-flow-token": readFileSync(safePath(HOME_DIR, TOKEN_FILE), "utf8").trim() },
     body: JSON.stringify(args ?? {}),
   });
   const data = (await res.json()) as { error?: string };
