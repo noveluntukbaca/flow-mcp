@@ -198,20 +198,21 @@ audio{width:100%;margin-top:8px;filter:invert(1) hue-rotate(180deg)}
       <section class="panel on" data-panel="cast">
         <div class="step">Step 1</div>
         <h2>Cast</h2>
-        <p class="lede">Make a character once and every scene can reuse it. Pembuatan memerlukan kontrol Characters yang tersedia di proyek Flow. Deskripsi memakai composer gambar dengan kutipan 0 kredit; bila tidak didukung, gunakan gambar atau buat karakter secara manual di Chrome.</p>
+        <p class="lede">Make a character once and every scene can reuse it. Buat karakter melalui composer native Google Flow. Nama menjadi referensi lokal MCP; kepribadian ditambahkan ke deskripsi. Suara hanya disimpan lokal. Biaya harus terverifikasi sebelum submit.</p>
         <div class="card">
           <div id="castList"></div>
           <label class="f">Name</label><input type="text" id="castName" placeholder="Sticky">
           <label class="f">What they look like</label>
           <textarea id="castLook" style="min-height:100px" placeholder="A cartoonish stick figure: thin black outline limbs, oversized round white head, big eyes, mustard beanie, red scarf, white gloves, grey shoes, flat vector style, white background"></textarea>
-          <p class="empty" style="margin-top:8px">Or attach a picture instead of describing them:</p>
+          <p class="empty" style="margin-top:8px">Opsional: pilih gambar referensi melalui Upload atau Add from project:</p>
           <div class="slots" style="margin-top:10px"><div class="slot" data-slot="cast" data-i="0"></div></div>
           <div class="grid2">
             <div><label class="f">Personality (optional)</label><input type="text" id="castMood" placeholder="Cheerful, clumsy, always in a hurry"></div>
             <div><label class="f">Voice (optional)</label><select id="castVoice"></select></div>
           </div>
           <div class="rowbtns"><button class="btn" id="castCreate">Create character</button><button class="btn ghost small" id="castReload">Reload</button></div>
-          <p class="empty" id="castInfo" style="margin-top:12px"></p>
+          <p class="empty" id="castInfo" style="margin-top:12px" role="status" aria-live="polite"></p>
+          <div id="castReview" hidden><p id="castQuote"></p><button class="btn" id="castConfirm">Konfirmasi biaya dan buat karakter</button><button class="btn ghost" id="castCancel">Batal</button></div>
         </div>
       </section>
 
@@ -574,7 +575,7 @@ function renderCast() {
     ? CAST.map((c) => `<div class="cast-card"><img src="${media(c.portrait ?? "")}"><div class="grow"><b>${esc(c.name)}</b><span class="empty">use in a frame or shot as a reference</span></div>
         <button class="btn small ghost" data-castuse="${esc(c.name)}">Use</button><button class="btn small ghost" data-castedit="${esc(c.name)}">Edit</button></div>`).join("")
     : `<p class="empty">No characters yet — describe one below and Flow will draw it.</p>`;
-  const slot = $('[data-slot="cast"]'); if (slot) slot.outerHTML = slotHtml("cast", 0, castImage, "Picture instead of a description");
+  const slot = $('[data-slot="cast"]'); if (slot) slot.outerHTML = slotHtml("cast", 0, castImage, "Gambar referensi (pilihan eksplisit)");
   $("#castVoice").innerHTML = `<option value="">No voice</option>` + (VOICES.gemini ?? []).map((v) => `<option value="${v.name}">${v.name} — ${v.description}</option>`).join("");
 }
 $("#castList").addEventListener("click", async (e) => {
@@ -598,24 +599,53 @@ async function loadCast() {
   const names = await api("characters");
   const outs = await api("outputs").catch(() => ({ projects: [] }));
   const cast = outs.projects.find((p) => p.name === "_cast");
-  return names.map((c) => ({ ...c, portrait: cast?.files.find((f) => f.name.toLowerCase().startsWith(c.name.toLowerCase().replace(/[^\w.-]+/g, "_").slice(0, 8)))?.path }));
+  return names.map((c) => ({ ...c, portrait: c.portrait || cast?.files.find((f) => f.name.toLowerCase().startsWith(c.name.toLowerCase().replace(/[^\w.-]+/g, "_").slice(0, 8)))?.path }));
 }
 $("#castReload").onclick = async () => { if (!guard()) return; try { CAST = await loadCast(); renderCast(); toast(`${CAST.length} character(s)`); } catch (err) { toast(err.message, true); } };
-$("#castCreate").onclick = async () => {
-  if (!guard()) return;
-  const name = $("#castName").value.trim(), look = $("#castLook").value.trim();
-  if (!name) return toast("Give the character a name.", true);
-  if (!look && !castImage) return toast("Describe them, or attach a picture.", true);
-  const b = $("#castCreate"); b.disabled = true; b.textContent = "Memeriksa Flow…";
-  $("#castInfo").textContent = "Memeriksa Characters dan kontrol pembuatan. Jangan kirim ulang sebelum memeriksa hasil di Chrome jika operasi gagal.";
+let characterReview = null;
+const characterInputs = () => ({ name: $("#castName").value.trim(), describe: $("#castLook").value.trim() || undefined,
+  image: castImage ? (castImage.asset ? `asset:${castImage.asset}` : castImage.path) : undefined,
+  personality: $("#castMood").value.trim() || undefined, voice: $("#castVoice").value || undefined });
+function clearCharacterReview() { characterReview = null; $("#castReview").hidden = true; }
+async function createNativeCharacter(args) {
+  const b = $("#castCreate"), confirmButton = $("#castConfirm");
+  b.disabled = true; confirmButton.disabled = true;
+  $("#castInfo").textContent = "Memeriksa composer native dan biaya Flow. Jangan kirim ulang ketika hasil belum pasti.";
   try {
-    const out = await api("character", { name, describe: look || undefined, image: castImage ? (castImage.asset ? `asset:${castImage.asset}` : castImage.path) : undefined, personality: $("#castMood").value.trim() || undefined, voice: $("#castVoice").value || undefined });
-    $("#castInfo").innerHTML = `Created <b>${esc(out.name)}</b>.${out.portrait ? `<br><img class="out" style="max-width:220px;margin-top:10px;border-radius:12px" src="${media(out.portrait)}">` : ""}`;
-    castImage = null; $("#castName").value = ""; $("#castLook").value = ""; $("#castMood").value = "";
-    CAST = await loadCast(); renderCast();
-  } catch (err) { $("#castInfo").textContent = err.message; toast(err.message, true); }
-  b.disabled = false; b.textContent = "Create character";
+    const out = await api("character", args);
+    $("#castInfo").textContent = out.message || "Operasi karakter selesai.";
+    if (out.status === "confirmation_required") {
+      const { confirmation_token, max_credits, ...creative } = args;
+      characterReview = { args: creative, token: out.confirmation_token, quote: out.quote };
+      $("#castQuote").textContent = `Model ${out.model}: ${out.quote} kredit. Tombol konfirmasi akan mengirim satu permintaan generasi. Suara tetap lokal.`;
+      $("#castReview").hidden = false;
+    } else {
+      clearCharacterReview();
+      if (["created", "already_exists"].includes(out.status)) {
+        castImage = null; $("#castName").value = ""; $("#castLook").value = ""; $("#castMood").value = "";
+        CAST = await loadCast(); renderCast();
+      }
+    }
+  } catch (err) { clearCharacterReview(); $("#castInfo").textContent = err.message; toast(err.message, true); }
+  finally { b.disabled = false; confirmButton.disabled = false; }
+}
+$("#castCreate").onclick = () => {
+  if (!guard()) return;
+  clearCharacterReview();
+  const args = characterInputs();
+  if (!args.name || (!args.describe && !args.image)) return toast("Isi nama lokal dan deskripsi atau pilih gambar.", true);
+  return createNativeCharacter(args);
 };
+$("#castConfirm").onclick = () => {
+  if (!characterReview || !guard()) return;
+  const reviewed = characterReview;
+  if (JSON.stringify(characterInputs()) !== JSON.stringify(reviewed.args)) {
+    clearCharacterReview(); $("#castInfo").textContent = "Input berubah. Klik Create character untuk meninjau kutipan baru."; return;
+  }
+  clearCharacterReview();
+  return createNativeCharacter({ ...reviewed.args, confirmation_token: reviewed.token, max_credits: reviewed.quote });
+};
+$("#castCancel").onclick = () => { clearCharacterReview(); $("#castInfo").textContent = "Konfirmasi dibatalkan. Tidak ada submit dari aplikasi."; };
 
 /* ---------- scene cards (frames + shots) ---------- */
 function sceneCards(group) {

@@ -1,5 +1,9 @@
 # Perbaikan kompatibilitas CREATE CHARACTER
 
+Catatan historis task 04. Alur pembuatan kini digantikan oleh
+[composer native dan konfirmasi harga](NATIVE_CHARACTER_COMPOSER.md).
+Instruksi potret terpisah/native form ditolak di bawah menjelaskan versi lama.
+
 Basis: branch Electron desktop `feature/flow-mcp-electron-desktop`, commit
 `c19fe8428b12ca1543c16dd8c6c23f81024df23d`. Saat investigasi, `main` masih pada
 `07c297a`; perubahan desktop belum digabungkan. Branch perbaikan:

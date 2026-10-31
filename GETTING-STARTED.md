@@ -181,7 +181,7 @@ Talk in plain English; you never type tool names. Nothing costs credits until st
 asks before spending.
 
 1. *"Check my Flow session."*
-2. *"Create a character called Pip, a small lamplighter in a flat cartoon style."* (free)
+2. *"Create a character called Pip, a small lamplighter in a flat cartoon style."* (verified quote required; approve any positive cost explicitly)
 3. *"Draw three stills with Pip: a dark rooftop, him lighting a lamp, the whole hillside glowing."* (free)
 4. *"Turn the first still into an 8-second clip at 720p."* (about 12 credits)
 5. *"Record a warm narration for it."* (free)
@@ -229,3 +229,6 @@ npm run build
 ```
 
 Then restart your assistant app so it picks up the new version.
+
+Native character creation, local identity/voice and pricing review are documented in
+[NATIVE_CHARACTER_COMPOSER.md](docs/NATIVE_CHARACTER_COMPOSER.md). Unknown pricing blocks submission.

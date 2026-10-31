@@ -251,15 +251,17 @@ export const shapes = {
       .string()
       .max(1200)
       .optional()
-      .describe("What the character looks like. Flow draws the portrait first (free image), then builds the character from it. Use this or `image`."),
+      .describe("Main prompt for the native Flow character composer; personality is appended. No separate portrait generation."),
     image: z
       .string()
       .min(1)
       .optional()
-      .describe("Existing picture instead of `describe`: absolute path, or 'asset:<title>' of an image already in the Flow project."),
-    aspect_ratio: z.enum(["3:4", "1:1", "9:16", "16:9", "4:3"]).optional().describe("Frame for the drawn portrait when using `describe`. Default 3:4."),
+      .describe("Explicit optional reference image for native creation: absolute path or asset:<title>. No image is attached unless selected."),
+    aspect_ratio: z.enum(["3:4", "1:1", "9:16", "16:9", "4:3"]).optional().describe("Legacy field; native composer aspect control is not verified. Omit for native creation."),
     personality: z.string().max(500).optional().describe("How the character acts; Flow uses it when crafting scenes."),
-    voice: z.string().optional().describe("Flow voice name, e.g. 'Charon' (male, informative) or 'Aoede' (female, breezy)."),
+    voice: z.string().optional().describe("Voice preference stored locally only; the native character composer does not receive a voice."),
+    max_credits: z.number().int().min(0).max(100000).default(0).describe("Maximum verified native character cost. Positive cost also requires a single-use confirmation_token from a prior review."),
+    confirmation_token: z.string().regex(/^[a-f0-9]{48}$/).optional().describe("Single-use, short-lived quote confirmation returned by flow_character. Send identical inputs and max_credits equal to the reviewed quote after explicit user approval. Unknown pricing can never be confirmed."),
   },
   techniques: { category: z.enum(["camera", "product", "transition", "image"]).optional() },
 };
@@ -633,8 +635,8 @@ export class LocalCore implements Core {
     this.characterWorking = true;
     try {
       const made = await createCharacter(a);
-      if (a.describe) rememberCharacter(a.name, a.describe);
-      return { ...made, use_as: `asset:${a.name}` };
+      if (made.status === "created" && a.describe) rememberCharacter(made.name, a.describe);
+      return made;
     } finally { this.characterWorking = false; }
   }
 
@@ -653,7 +655,9 @@ export class LocalCore implements Core {
 
   async characters() {
     if (this.busy) throw new Error(BUSY);
-    return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
+    this.characterWorking = true;
+    try { return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` })); }
+    finally { this.characterWorking = false; }
   }
 
   // Panel only: deliberately NOT registered as an MCP tool, so a key typed into Flow Studio never reaches Claude.

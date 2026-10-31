@@ -218,7 +218,7 @@ server.registerTool(
   {
     title: "Create a reusable character",
     description:
-      "Create a reusable Flow character (person, mascot, product) so it looks the same in every scene. Free. Give `describe` and Flow draws the portrait first, or `image` to use a picture you already have; optionally a personality and a stock voice. Afterwards pass 'asset:<name>' in a scene's reference_images.",
+      "Create a character through Flow's native New character composer. name is a local MCP reference, describe is the prompt, personality is appended, and voice stays local. image is an explicitly selected optional upload or asset reference. Unknown pricing blocks submission. A positive verified quote returns confirmation_required: ask the user to approve that exact quote, then call again with identical inputs, the returned confirmation_token and max_credits. Never auto-confirm or retry an ambiguous submission. Durable local identity prevents duplicates after restart.",
     inputSchema: shapes.character,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },

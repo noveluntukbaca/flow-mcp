@@ -47,6 +47,27 @@ try {
     await studio.locator(`#${id}Close`).click();
     assert.equal(await studio.locator(`#${id}`).evaluate(dialog => dialog.open), false);
   }
+  // Native character review is a user action, never an automatic second API call.
+  const characterCalls = [];
+  fake.on('message', message => { if (message.type === 'character-call') characterCalls.push(message.args); });
+  await studio.locator('#castName').fill('UI Fox'); await studio.locator('#castLook').fill('A red fox');
+  let sent = once(fake, 'message'); await studio.locator('#castCreate').click(); await sent;
+  await studio.locator('#castReview').waitFor({state:'visible'}); assert.equal(characterCalls.length,1);
+  await studio.locator('#castCancel').click(); assert.equal(characterCalls.length,1);
+  sent = once(fake,'message'); await studio.locator('#castCreate').click(); await sent;
+  await studio.locator('#castReview').waitFor({state:'visible'});
+  await studio.locator('#castName').fill('UI Fox Changed'); await studio.locator('#castConfirm').click();
+  await studio.locator('#castReview').waitFor({state:'hidden'}); assert.equal(characterCalls.length,2);
+  sent = once(fake,'message'); await studio.locator('#castCreate').click(); await sent;
+  await studio.locator('#castReview').waitFor({state:'visible'});
+  sent = once(fake,'message'); await studio.locator('#castConfirm').click(); await sent;
+  await studio.locator('#castCreate:enabled').waitFor(); assert.equal(characterCalls.length,4);
+  assert.equal(characterCalls[3].max_credits,20); assert.equal(characterCalls[3].confirmation_token,'a'.repeat(48));
+  await studio.locator('#castName').fill('Unknown pricing'); await studio.locator('#castLook').fill('A fox');
+  sent = once(fake,'message'); await studio.locator('#castCreate').click(); await sent;
+  await studio.locator('#castCreate:enabled').waitFor(); assert.equal(characterCalls.length,5);
+  assert.equal(await studio.locator('#castReview').isVisible(),false);
+  console.log('Studio character pricing review/cancel/input-change/explicit confirmation/unknown-cost UI: PASS');
   assert.equal(await studio.evaluate(() => typeof window.flowDesktop), 'undefined');
   assert.equal(await studio.evaluate(() => typeof window.require), 'undefined');
   assert.equal(await studio.evaluate(async () => (await fetch('/api/health')).status), 200);

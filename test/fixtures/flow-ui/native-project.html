@@ -1,0 +1,59 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><body>
+<nav aria-label="Project navigation"><button role="tab" id="characters">Characters</button></nav>
+<div aria-label="Account balance">999 credits</div><main id="main"></main>
+<script>
+window.config = { cost: 0, outcome: 'success' };
+window.submits = 0; window.uploads = 0; window.avatarClicks = 0;
+const image = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+window.results = [];
+function showCharacters() {
+ document.querySelector('#main').innerHTML = '<h1>Characters</h1><button id="new">New character</button><button id="avatar">Create my avatar</button><div id="cards"></div>';
+ document.querySelector('#new').onclick = showComposer;
+ document.querySelector('#avatar').onclick = () => window.avatarClicks++;
+ for (const result of [{id:'old',title:'Existing Hero'}, ...window.results]) {
+  const card = document.createElement('flow-character-tile'); card.setAttribute('data-character-id', result.id); card.setAttribute('aria-label', result.title);
+  const link = document.createElement('a'); link.href = 'https://flow.google.com/project/offline-project/characters/' + result.id; link.textContent = result.title;
+  const img = document.createElement('img'); img.src = image; img.alt = result.title; card.append(link, img);
+  if (result.busy) { const progress = document.createElement('div'); progress.setAttribute('role','progressbar'); progress.textContent='Generating 10%'; card.append(progress); } document.querySelector('#cards').append(card);
+ }
+}
+function showComposer() {
+ document.querySelector('#main').innerHTML = '<section aria-label="Sample prompts"><button>A brave knight, 100 credits</button><img alt="Sample character" src="'+image+'"></section><form aria-label="Character composer"><textarea placeholder="Describe your character..."></textarea><button type="button" id="upload">Upload</button><input type="file" id="file" accept="image/*" hidden><button type="button" id="project">Add from project</button><button type="button" id="model">Nano Banana 2.1</button><span id="price" role="status" aria-label="Generation cost"></span><div id="chips"></div><button id="submit" type="submit" aria-label="Generate character"><span aria-hidden="true">arrow_forward</span></button></form>';
+ const form = document.querySelector('form');
+ document.querySelector('#model').textContent = window.config.model || 'Nano Banana 2.1';
+ document.querySelector('#price').textContent = window.config.cost === null ? 'Price unavailable' : window.config.cost + ' credits';
+ if (window.config.disabled) document.querySelector('#submit').disabled = true;
+ if (window.config.unsafeArrow) { document.querySelector('#submit').type = 'button'; document.querySelector('#submit').removeAttribute('aria-label'); }
+ function chip(name) {
+  const group = document.createElement('div'); group.setAttribute('role', 'group');
+  const img = document.createElement('img'); img.src = image; img.alt = name;
+  const remove = document.createElement('button'); remove.type = 'button'; remove.setAttribute('aria-label','Remove image ' + name); remove.textContent = name; remove.onclick = () => group.remove();
+  group.append(img,remove); document.querySelector('#chips').append(group);
+  if (window.config.attachedCost !== undefined) document.querySelector('#price').textContent = window.config.attachedCost + ' credits';
+ }
+ document.querySelector('#upload').onclick = () => document.querySelector('#file').click();
+ document.querySelector('#file').onchange = () => {
+  window.uploads++;
+  if (window.config.unexpectedUpload) { history.pushState(null,'','/project/offline-project/characters/unexpected'); showCharacters(); return; }
+  chip(document.querySelector('#file').files[0].name);
+ };
+ document.querySelector('#project').onclick = () => {
+  const dialog = document.createElement('dialog'); dialog.innerHTML = '<div role="listbox" aria-label="Asset list"><button type="button" role="option">Reference Image</button><button type="button" role="option">Native Result 1 Character</button><button type="button" role="option">Native Result 10 Character</button></div><button type="button" id="addMedia">Add media</button><button type="button" id="addPrompt">Add to prompt</button>'; document.body.append(dialog); dialog.showModal();
+  for (const option of dialog.querySelectorAll('[role=option]')) option.onclick = event => { for (const other of dialog.querySelectorAll('[role=option]')) other.removeAttribute('aria-selected'); event.currentTarget.setAttribute('aria-selected','true'); };
+  const accept = () => { const selected = dialog.querySelector('[aria-selected=true]'); if (selected) { window.uploads++; chip(selected.textContent); dialog.close(); dialog.remove(); } };
+  dialog.querySelector('#addMedia').onclick = accept; dialog.querySelector('#addPrompt').onclick = accept;
+ };
+ form.onsubmit = event => {
+  event.preventDefault(); window.submits++;
+  window.sentPrompt = form.querySelector('textarea').value;
+  if (window.config.outcome === 'timeout') return;
+  if (window.config.outcome === 'wrong-project') { history.pushState(null,'','/project/other-project'); return; }
+  window.results.push({id:'native-'+window.submits, title:'Native Result '+window.submits, busy:window.config.outcome==='pending-card'});
+  if (window.config.outcome === 'editor') { history.pushState(null,'','/project/offline-project/characters/native-'+window.submits); document.querySelector('#main').innerHTML='<img alt="Generated character image" src="'+image+'"><button id="done">Done editing</button>'; document.querySelector('#done').onclick=()=>{history.pushState(null,'','/project/offline-project'); showCharacters();}; return; }
+  if (window.config.outcome === 'ambiguous') window.results.push({id:'extra',title:'Other Result'});
+  showCharacters();
+ };
+}
+document.querySelector('#characters').onclick = showCharacters;
+showCharacters();
+</script></body></html>
