@@ -1,3 +1,4 @@
+import { outputPath, safePath } from "./paths.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -336,10 +337,10 @@ export async function transcribe(video: string, language = "auto"): Promise<Tran
   const asked = language.trim().toLowerCase() || "auto";
   if (!/^(auto|[a-z]{2,3})$/.test(asked)) throw new Error(`"${language}" isn't a language code. Use a code such as en, es or ja, or auto.`);
   const st = statSync(video);
-  const cacheFile = (...parts: string[]) => join(CACHE_DIR, `${createHash("sha1").update([video, st.size, st.mtimeMs, ...parts].join("|")).digest("hex").slice(0, 16)}.json`);
+  const cacheFile = (...parts: string[]) => safePath(join(CACHE_DIR, `${createHash("sha1").update([video, st.size, st.mtimeMs, ...parts].join("|")).digest("hex").slice(0, 16)}.json`), CACHE_DIR);
   const keep = (t: Transcript, ...files: (string | undefined)[]) => {
     mkdirSync(CACHE_DIR, { recursive: true });
-    for (const f of files) if (f) writeFileSync(f, JSON.stringify(t));
+    for (const f of files) if (f) writeFileSync(safePath(f, CACHE_DIR), JSON.stringify(t));
     return t;
   };
   // "auto" is remembered on its own, so the language is detected once per video, not on every preview.
@@ -645,10 +646,10 @@ export async function previewCaptions(video: string, o: CaptionOptions): Promise
 
   mkdirSync(CACHE_DIR, { recursive: true });
   const key = createHash("sha1").update(video).digest("hex").slice(0, 12);
-  const frame = join(CACHE_DIR, `frame-${key}.jpg`);
+  const frame = safePath(join(CACHE_DIR, `frame-${key}.jpg`), CACHE_DIR);
   await run(FFMPEG, ["-v", "error", "-y", "-ss", at.toFixed(3), "-i", video, "-frames:v", "1", "-q:v", "3", frame], BIG);
   const background = `data:image/jpeg;base64,${readFileSync(frame).toString("base64")}`;
-  const image = join(CACHE_DIR, `preview-${key}.jpg`);
+  const image = safePath(join(CACHE_DIR, `preview-${key}.jpg`), CACHE_DIR);
   await withPage(info.width, info.height, pageHtml(o.style, { ...info, position: o.position, size: o.size, color: pickColor(o), letters: lettersOf(o), lang, names: namesIn(words, o.names), background }), async (p) => {
     if (state) await p.evaluate((s) => (window as unknown as { paint: (s: unknown) => void }).paint(s), state);
     await p.screenshot({ path: image, type: "jpeg", quality: 85 });
@@ -675,6 +676,8 @@ export interface CaptionResult {
 }
 
 export async function burnCaptions(video: string, o: CaptionOptions, output: string): Promise<CaptionResult> {
+  outputPath(output);
+  outputPath(output.replace(/\.[^.]+$/, ".srt"));
   const info = await probe(video);
   const { transcript, words } = await timedWords(video, o);
   const lang = transcript.language;
@@ -730,7 +733,7 @@ export async function burnCaptions(video: string, o: CaptionOptions, output: str
     });
 
     // The same words as a subtitle file, for YouTube and other players that show their own captions.
-    const srt = output.replace(/\.[^.]+$/, ".srt");
+    const srt = outputPath(output.replace(/\.[^.]+$/, ".srt"));
     writeFileSync(
       srt,
       pages
@@ -752,6 +755,7 @@ export function captionedName(dir: string, video: string): string {
   const stem = basename(video, extname(video)).replace(/[^\w.-]+/g, "_");
   for (let i = 1; ; i++) {
     const out = join(dir, `${stem}-captions${i > 1 ? `-${i}` : ""}.mp4`);
+    outputPath(out);
     if (!existsSync(out)) return out;
   }
 }

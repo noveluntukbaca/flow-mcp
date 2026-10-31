@@ -262,3 +262,25 @@ build."* Then fully quit and reopen your assistant app so it loads the new versi
 This automates Flow's web interface. It can break whenever Google changes that interface, and
 automated use may be against Google's terms of service. Use it on your own account, at your own
 risk.
+
+### Offline regression tests
+
+Run `npm ci --include=dev --include=optional`, then `npm run build` and `npm test`.
+The default test suite uses temporary directories, a fake backend, MCP stdio and
+loopback HTTP. It never signs in, opens Flow or generates paid media. If FFmpeg and
+ffprobe are installed, it also assembles synthetic clips and extracts a frame;
+otherwise that optional media test is explicitly skipped. `scripts/e2e.mjs` remains
+a separate, manual integration script that can spend credits; it is not run by
+`npm test` or CI.
+
+The offline CI matrix runs on Linux and Windows with Node 22 and 24. Windows file
+symlink tests may be skipped when the runner lacks symlink privilege; directory
+junction regression tests still run. This CI is not a claim of Windows 10/11
+installer, real Chrome/Flow, speech or caption-rendering compatibility.
+
+Project names must be folder names, not paths: dot segments, separators, drive/UNC
+syntax, trailing dots/spaces and Windows device names are refused. Legacy ASCII
+sanitization of other names is retained (different Unicode names can still map to
+the same folder). Output, upload and caption media routes refuse symlinks and
+junctions, including links pointing back inside an allowed root. Use real folders
+for `FLOW_MCP_OUTPUT`, uploads and the caption cache.

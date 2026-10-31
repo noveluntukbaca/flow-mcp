@@ -1,7 +1,8 @@
+import { safePath } from "./paths.js";
 import { randomBytes } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { basename, extname, join, resolve, sep } from "node:path";
+import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { CACHE_DIR as CAPTIONS_DIR } from "./captions.js";
@@ -41,10 +42,13 @@ function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   });
 }
 
-const inside = (file: string, dir: string) => resolve(file).startsWith(resolve(dir) + sep);
+
 
 function sendMedia(req: IncomingMessage, res: ServerResponse, file: string) {
-  if (!(inside(file, OUTPUT_ROOT) || inside(file, UPLOAD_DIR) || inside(file, CAPTIONS_DIR)) || !existsSync(file)) return json(res, 404, { error: "Not found." });
+  const allowed = [OUTPUT_ROOT, UPLOAD_DIR, CAPTIONS_DIR].some((root) => {
+    try { safePath(file, root); return true; } catch { return false; }
+  });
+  if (!allowed || !existsSync(file) || !statSync(file).isFile()) return json(res, 404, { error: "Not found." });
   const { size } = statSync(file);
   const type = MIME[extname(file).toLowerCase()] ?? "application/octet-stream";
   const range = req.headers.range?.match(/bytes=(\d*)-(\d*)/);
@@ -88,7 +92,8 @@ export async function startServer(core: Core): Promise<ServerRole> {
       if (req.method === "POST" && url.pathname === "/api/upload") {
         const name = basename(url.searchParams.get("name") ?? "upload").replace(/[^\w.-]+/g, "_");
         const path = join(UPLOAD_DIR, `${randomBytes(4).toString("hex")}-${name}`);
-        writeFileSync(path, await readBody(req, MAX_UPLOAD));
+        const body = await readBody(req, MAX_UPLOAD);
+        writeFileSync(safePath(path, UPLOAD_DIR), body, { flag: "wx" });
         return json(res, 200, { path });
       }
 
