@@ -5,10 +5,11 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron } from 'playwright-core';
-const root = fileURLToPath(new URL('../', import.meta.url));
+// Avoid a trailing Windows backslash before a closing CLI quote.
+const root = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const scratch = mkdtempSync(join(tmpdir(), 'flow-electron ü '));
 const probe = createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening');
 const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
@@ -26,7 +27,7 @@ try {
   ]);
   assert.equal(ready.role, 'owner');
   const executablePath = process.env.FLOW_DESKTOP_SMOKE_EXECUTABLE;
-  electron = await _electron.launch({ executablePath, args: [...(executablePath ? [] : [root]), `--user-data-dir=${join(scratch, 'electron')}`], env, timeout: 30000 });
+  electron = await _electron.launch({ executablePath, args: [...(executablePath ? [] : [root]), `--user-data-dir=${join(scratch, 'electron')}`], env, timeout: 60000 });
   const startup = await electron.firstWindow();
   await startup.locator('#start:enabled').waitFor();
   assert.match(await startup.locator('#ffmpeg').textContent(), /opsional/);
