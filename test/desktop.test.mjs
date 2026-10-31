@@ -86,6 +86,9 @@ test('Studio CSP permits only the exact served inline scripts and loopback asset
   const { studioCsp } = await import('../dist/desktop/csp.js');
   const html = '<script>const token="a";</script>';
   const policy = studioCsp(html);
+  const lf = '<script>\nconst token="a";\n</script>';
+  assert.equal(studioCsp(lf.replaceAll('\n', '\r\n')), studioCsp(lf));
+  assert.equal(studioCsp(lf.replaceAll('\n', '\r')), studioCsp(lf));
   assert.match(policy, /script-src 'sha256-/);
   assert.ok(!policy.includes("script-src 'unsafe-inline'"));
   assert.notEqual(policy, studioCsp(html.replace('"a"', '"b"')));
