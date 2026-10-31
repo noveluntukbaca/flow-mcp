@@ -57,6 +57,7 @@ async function launchChrome(): Promise<void> {
     [
       `--user-data-dir=${PROFILE_DIR}`,
       `--remote-debugging-port=${CDP_PORT}`,
+      "--remote-debugging-address=127.0.0.1",
       "--no-first-run",
       "--no-default-browser-check",
       inEnglish(FLOW_URL),

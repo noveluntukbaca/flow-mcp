@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="id">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow MCP Studio — Persiapan</title>
+<link rel="stylesheet" href="startup.css">
+<main>
+  <p class="eyebrow">FLOW MCP STUDIO</p>
+  <h1>Studio Anda, di desktop.</h1>
+  <p>Login tetap berlangsung di Google Chrome dengan profil Flow yang terpisah. Aplikasi ini tidak menyimpan kata sandi Google.</p>
+  <section aria-label="Pemeriksaan dependensi" aria-live="polite">
+    <p id="chrome">Memeriksa Google Chrome…</p>
+    <p id="ffmpeg">Memeriksa FFmpeg dan ffprobe (opsional)…</p>
+  </section>
+  <p>Menekan “Buka Studio” akan membuka antarmuka lama dan memeriksa status Flow di Chrome. Generasi tetap memerlukan tindakan Anda dan dapat memakai kredit.</p>
+  <p id="message" role="status" aria-live="polite"></p>
+  <button id="start" disabled>Buka Studio</button>
+  <button id="retry">Periksa ulang</button>
+  <p class="note">Tutup aplikasi setelah semua pekerjaan selesai. Backend milik sesi MCP lain dan profil Chrome tidak akan ditutup.</p>
+</main>
+<script src="startup.js"></script>
+</html>
