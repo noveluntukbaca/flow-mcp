@@ -2,13 +2,17 @@
   "name": "flow-mcp",
   "version": "0.1.0",
   "description": "Local MCP server that drives Google Flow in a dedicated Chrome profile",
-  "main": "index.js",
+  "main": "dist/desktop/main.js",
   "scripts": {
     "test": "npm run build && node --test test/*.test.mjs",
     "build": "tsc",
     "start": "node dist/index.js",
     "login": "node dist/login.js",
-    "studio": "node dist/studio.js"
+    "studio": "node dist/studio.js",
+    "desktop": "npm run build && electron .",
+    "desktop:smoke": "npm run build && node scripts/desktop-smoke.mjs",
+    "package:win": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "package:dir": "npm run build && electron-builder --dir --publish never"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +28,46 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0",
     "typescript": "^7.0.2"
+  },
+  "build": {
+    "appId": "com.flowmcp.studio",
+    "productName": "Flow MCP Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/**/*",
+      "studio/index.html",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/playwright-core/**/*"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Flow-MCP-Studio-${version}-win-${arch}-setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

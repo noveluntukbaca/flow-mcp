@@ -284,3 +284,15 @@ sanitization of other names is retained (different Unicode names can still map t
 the same folder). Output, upload and caption media routes refuse symlinks and
 junctions, including links pointing back inside an allowed root. Use real folders
 for `FLOW_MCP_OUTPUT`, uploads and the caption cache.
+
+### Flow MCP Studio Desktop (Windows, validation pending)
+
+Run `npm ci --include=dev --include=optional` with Node 24 LTS, then
+`npm run desktop`. Electron reuses the existing Studio and localhost backend,
+with an Indonesian dependency/startup screen and the existing external Chrome
+profile. Opening Studio performs its normal Flow status check; the offline test
+suite and `npm run desktop:smoke` use no Google services or credits.
+
+`npm run package:win` prepares a Windows x64 NSIS installer with no automatic
+publishing. Installer compatibility and signing remain unvalidated. See
+[Windows desktop installation, security and testing](docs/DESKTOP_WINDOWS.md).

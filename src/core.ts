@@ -332,6 +332,9 @@ export const VOICES = [
 const BUSY = "A generation is running in the Flow tab. Wait for it to finish (flow_wait), then retry.";
 
 export class LocalCore implements Core {
+  // Desktop shutdown must wait for queued/running work without polling Google Flow.
+  get busy(): boolean { return this.queue.list().some(job => job.status === "queued" || job.status === "running"); }
+
   private queue: JobQueue = new JobQueue(async (job) => {
     const { chain_from, reference_from } = job.params;
     if (reference_from) {

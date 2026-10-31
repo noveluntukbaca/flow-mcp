@@ -1,7 +1,7 @@
 import { safePath } from "./paths.js";
 import { randomBytes } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -66,7 +66,7 @@ export type ServerRole = "owner" | "client" | "none";
 
 // Serves the Studio panel and a JSON API on localhost. Returns "client" when another flow-mcp process already
 // owns the port (that process owns the Flow tab and the queue), "none" when the port is taken by something else.
-export async function startServer(core: Core): Promise<ServerRole> {
+export async function startServer(core: Core, options: { onOwner?: (server: Server) => void } = {}): Promise<ServerRole> {
   mkdirSync(UPLOAD_DIR, { recursive: true });
   const token = randomBytes(24).toString("hex");
   const allowedHosts = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
@@ -118,6 +118,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
   if (listening) {
     mkdirSync(HOME_DIR, { recursive: true });
     writeFileSync(TOKEN_FILE, token, { mode: 0o600 });
+    options.onOwner?.(server);
     return "owner";
   }
   // The port is taken. Who has it matters enormously: becoming a second LOCAL core means two processes drive the same
