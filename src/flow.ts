@@ -1,3 +1,4 @@
+import { outputPath, OUTPUT_ROOT } from "./paths.js";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
@@ -608,10 +609,10 @@ function unpackTakes(zip: string, targetStem: string): string[] {
   const out: string[] = [];
   for (const [i, path] of takes.entries()) {
     const dest = `${targetStem}${i ? `-v${i + 1}` : ""}${extensionOf(path)}`;
-    renameSync(path, dest);
+    renameSync(path, outputPath(dest));
     out.push(dest);
   }
-  renameSync(zip, `${targetStem}-takes.zip`);
+  renameSync(zip, outputPath(`${targetStem}-takes.zip`));
   if (!out.length) throw new Error("Flow sent a ZIP with nothing usable inside it.");
   return out;
 }
@@ -679,7 +680,7 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       if (kind === ".zip") saved = unpackTakes(file, targetStem);
       else {
         const target = `${targetStem}${kind}`;
-        renameSync(file, target);
+        renameSync(file, outputPath(target));
         saved = [target];
       }
       await page.keyboard.press("Escape");
@@ -823,7 +824,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const fresh = await waitForNewMedia(page, before, variants, s.type === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS, job, s.type === "image" ? "image" : "video");
   job.progress = undefined;
 
-  mkdirSync(s.output_dir, { recursive: true });
+  mkdirSync(outputPath(s.output_dir), { recursive: true });
   const files: string[] = [];
   for (const [i, id] of fresh.entries()) {
     const label = fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
@@ -926,7 +927,7 @@ async function leaveCharacterEditor(page: Page): Promise<void> {
 // download through the same watched folders as every other file.
 async function savePortrait(page: Page, name: string): Promise<string> {
   await useOwnDownloadDir(page);
-  const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
+  const dir = outputPath(join(OUTPUT_ROOT, "_cast"));
   mkdirSync(dir, { recursive: true });
   const picture = page.getByRole("img", { name: "Generated character image" }).first();
   const button = page.getByRole("button", { name: "Download image", exact: true });
@@ -942,7 +943,7 @@ async function savePortrait(page: Page, name: string): Promise<string> {
   if (!pressed) throw new Error("Flow never showed the portrait's Download image button");
   const file = await waitForDownloadedFile(page, before, 90_000);
   const portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extensionOf(file)}`);
-  renameSync(file, portrait);
+  renameSync(file, outputPath(portrait));
   return portrait;
 }
 
@@ -1109,7 +1110,7 @@ async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): 
   await page.getByRole("button", { name: "Download scene", exact: true }).click();
   const file = await waitForDownloadedFile(page, before, 600_000);
   const target = `${targetStem}${extensionOf(file)}`;
-  renameSync(file, target);
+  renameSync(file, outputPath(target));
   await page.getByRole("button", { name: "Back button to go to previous page" }).click().catch(() => {});
   await pause(page, 2000);
   await ensureProjectGrid(page).catch(() => {});
@@ -1153,7 +1154,7 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
   if (!c.image) {
     if (!c.describe) throw new Error("Pass either an image or a description for the character.");
     if (job) job.progress = "drawing the character";
-    const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
+    const dir = outputPath(join(OUTPUT_ROOT, "_cast"));
     const made = await runGeneration({
       ...(job ?? ({ id: "char", status: "running", files: [], attempts: 1, createdAt: "" } as unknown as Job)),
       files: [],
@@ -1298,7 +1299,7 @@ export async function runEdit(job: Job): Promise<string[]> {
   await pause(page, 2500);
   await ensureProjectGrid(page);
   const fresh = await waitForNewMedia(page, before, 1, 90_000, undefined, "video");
-  mkdirSync(s.output_dir, { recursive: true });
+  mkdirSync(outputPath(s.output_dir), { recursive: true });
   const saved = await downloadMedia(page, fresh[0], join(s.output_dir, s.file_stem), s.download_quality);
   const after = await readCredits(page).catch(() => undefined);
   if (balance !== undefined && after !== undefined) job.credits = balance - after;
@@ -1526,7 +1527,7 @@ async function agentRound(
     prompts,
   );
   const drop = Number(process.env.FLOW_MCP_SIMULATE_MISSING ?? 0); // test hook: pretend this scene number failed
-  mkdirSync(s.output_dir, { recursive: true });
+  mkdirSync(outputPath(s.output_dir), { recursive: true });
   let produced = 0;
   for (const [n, tileIndexes] of assigned.entries()) {
     const sceneIndex = indexes[n];
@@ -1647,7 +1648,7 @@ export async function runContinue(job: Job): Promise<string[]> {
 
     const fresh = await waitForNewMedia(page, before, 1, VIDEO_TIMEOUT_MS, job, "video");
     job.progress = undefined;
-    mkdirSync(s.output_dir, { recursive: true });
+    mkdirSync(outputPath(s.output_dir), { recursive: true });
     const saved = await downloadMedia(page, fresh[0], join(s.output_dir, s.file_stem), s.download_quality);
     const after = await readCredits(page).catch(() => undefined);
     if (balance !== undefined && after !== undefined) job.credits = balance - after;

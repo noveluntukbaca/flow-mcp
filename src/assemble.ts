@@ -1,3 +1,4 @@
+import { outputPath } from "./paths.js";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -51,6 +52,7 @@ function defaultClips(dir: string): string[] {
     throw new Error(`There's no "${basename(dir)}" folder in your films yet. Add clips with "Upload a video" or "From my films", or type the name of a folder that already has clips in it.`);
   }
   const files = readdirSync(dir).filter((f) => /\.mp4$/i.test(f) && !/^narration-/i.test(f));
+  for (const file of files) outputPath(join(dir, file));
   const numbered = new Map<string, string>();
   for (const f of files.sort()) {
     const key = f.match(/^((?:scene|clip|edit)-\d+)(-v\d+)?\.mp4$/i)?.[1];
@@ -103,10 +105,11 @@ export async function localVoices(): Promise<{ name: string; description: string
 // Speaks a line with this computer's own voice. Free and instant, but only as good as the installed voice.
 export async function speakLocally(text: string, voice: string, target: string): Promise<{ output: string; duration: number }> {
   const stem = target.replace(/\.\w+$/, "");
-  const raw = stem + (IS_WIN ? ".wav" : ".aiff");
+  outputPath(target);
+  const raw = outputPath(stem + (IS_WIN ? ".wav" : ".aiff"));
   if (IS_WIN) {
     // The line goes through a file, never the command line, so quotes or symbols in it cannot break the script.
-    const lineFile = stem + ".line.txt";
+    const lineFile = outputPath(stem + ".line.txt");
     writeFileSync(lineFile, text, "utf8");
     try {
       powershell(
@@ -138,6 +141,7 @@ export interface VoiceLine {
 // take at its own pace and cannot time a word to an on-screen title, so the timing is done here instead: 2026-10-12,
 // a narration in the user's own Flow voice had to land each line on the kinetic text it describes.
 export async function voiceTrack(lines: VoiceLine[], out: string): Promise<{ file: string; lines: { at: number; seconds: number; speed: number }[]; warnings: string[] }> {
+  outputPath(out);
   if (!lines.length) throw new Error("No voice lines given.");
   const work = mkdtempSync(join(tmpdir(), "flow-voice-"));
   try {
@@ -202,8 +206,9 @@ export async function voiceTrack(lines: VoiceLine[], out: string): Promise<{ fil
 // Joins the scene clips into one film, keeping their own sound and laying music / voiceover on top.
 export async function assemble(o: AssembleOptions): Promise<{ output: string; clips: string[]; duration: number; held_last_frame: number }> {
   // Clips can now come from anywhere, so the project folder the film is saved into may not exist yet.
+  outputPath(o.dir);
   if (o.clips?.length) mkdirSync(o.dir, { recursive: true });
-  const out = join(o.dir, o.output_name.replace(/[^\w.-]+/g, "_").replace(/(\.mp4)?$/, ".mp4"));
+  const out = outputPath(join(o.dir, o.output_name.replace(/[^\w.-]+/g, "_").replace(/(\.mp4)?$/, ".mp4")));
   const clips = (o.clips?.length ? o.clips : defaultClips(o.dir)).filter((c) => c !== out);
   if (!clips.length) throw new Error(`No clips found in ${o.dir}. Generate or download a clip first, or pass clips explicitly.`);
   for (const f of [...clips, o.music, o.voiceover]) if (f && !existsSync(f)) throw new Error(`File not found: ${f}`);
@@ -251,7 +256,7 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
   }
   filters.push(mix.length > 1 ? `${mix.join("")}amix=inputs=${mix.length}:duration=first:dropout_transition=0:normalize=0[a]` : "[clipaudio]anull[a]");
 
-  const output = out;
+  const output = outputPath(out);
   args.push(
     "-filter_complex", filters.join(";"),
     "-map", "[v]", "-map", "[a]",

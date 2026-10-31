@@ -1,3 +1,4 @@
+import { outputPath } from "./paths.js";
 import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -62,6 +63,8 @@ interface TtsPart {
 
 // Speaks a line with Gemini's TTS. Free tier, no Flow credits, no length cap, and the same voices Flow uses.
 export async function speakWithGemini(text: string, voice: string, target: string, style?: string): Promise<{ output: string; duration: number }> {
+  outputPath(target);
+  outputPath(target.replace(/\.\w+$/, "") + ".pcm");
   const key = geminiKey();
   if (!key) {
     const placeholder = existsSync(KEY_FILE) && readFileSync(KEY_FILE, "utf8").trim().length > 0;
@@ -92,14 +95,14 @@ export async function speakWithGemini(text: string, voice: string, target: strin
   // The audio comes back as raw signed 16-bit PCM, so the sample rate has to come from the mime type.
   const rate = Number(part.inlineData.mimeType?.match(/rate=(\d+)/)?.[1] ?? 24000);
   const raw = target.replace(/\.\w+$/, "") + ".pcm";
-  writeFileSync(raw, Buffer.from(part.inlineData.data, "base64"));
+  writeFileSync(outputPath(raw), Buffer.from(part.inlineData.data, "base64"));
   await run(FFMPEG, [
     "-y", "-f", "s16le", "-ar", String(rate), "-ac", "1", "-i", raw,
     "-af", "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target,
   ]);
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
   const duration = Number(stdout.trim());
-  writeFileSync(raw, "");
+  writeFileSync(outputPath(raw), "");
   await run("rm", ["-f", raw]).catch(() => {});
   return { output: target, duration };
 }
