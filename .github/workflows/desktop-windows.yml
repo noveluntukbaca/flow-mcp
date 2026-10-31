@@ -17,6 +17,7 @@ jobs:
       - run: npm test
       - run: npm audit --audit-level=high
       - run: npm audit --omit=dev
+      - run: npm run test:flow-ui
       - run: npm run desktop:smoke
       - run: npm run package:win
         env:

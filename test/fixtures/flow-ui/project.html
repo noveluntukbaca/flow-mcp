@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><body>
+<nav aria-label="Project navigation"><button id="characters" role="tab">Characters</button></nav>
+<div id="composer"><div class="ProseMirror" contenteditable="true" role="textbox"></div><button>Settings trigger</button><button id="generate">Start generation</button></div>
+<main id="main"></main>
+<script>
+window.dispatches = 0;
+document.querySelector('#generate').onclick = () => window.dispatches++;
+document.querySelector('#characters').onclick = () => {
+ document.querySelector('#main').innerHTML = '<button id="new">Create character</button>';
+ document.querySelector('#new').onclick = () => {
+  document.querySelector('#main').innerHTML = '<h1>Create character</h1><button id="upload">Upload image</button><input type="file" id="file" accept="image/*" hidden>';
+  document.querySelector('#upload').onclick = () => document.querySelector('#file').click();
+  document.querySelector('#file').onchange = () => {
+   window.dispatches++;
+   history.pushState(null, '', '/project/offline-project/characters/local-created');
+   document.querySelector('#main').innerHTML = '<label>Character name<input id="name" aria-label="Character name"></label><button id="done">Done</button>';
+   document.querySelector('#done').onclick = () => { history.pushState(null, '', '/project/offline-project'); document.querySelector('#main').innerHTML = ''; };
+  };
+ };
+};
+</script></body></html>

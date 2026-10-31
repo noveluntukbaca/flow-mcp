@@ -198,7 +198,7 @@ audio{width:100%;margin-top:8px;filter:invert(1) hue-rotate(180deg)}
       <section class="panel on" data-panel="cast">
         <div class="step">Step 1</div>
         <h2>Cast</h2>
-        <p class="lede">Make a character once and every scene can reuse it. Flow draws the portrait from your description, then locks that exact design into any frame or clip that references it.</p>
+        <p class="lede">Make a character once and every scene can reuse it. Pembuatan memerlukan kontrol Characters yang tersedia di proyek Flow. Deskripsi memakai composer gambar dengan kutipan 0 kredit; bila tidak didukung, gunakan gambar atau buat karakter secara manual di Chrome.</p>
         <div class="card">
           <div id="castList"></div>
           <label class="f">Name</label><input type="text" id="castName" placeholder="Sticky">
@@ -606,8 +606,8 @@ $("#castCreate").onclick = async () => {
   const name = $("#castName").value.trim(), look = $("#castLook").value.trim();
   if (!name) return toast("Give the character a name.", true);
   if (!look && !castImage) return toast("Describe them, or attach a picture.", true);
-  const b = $("#castCreate"); b.disabled = true; b.textContent = "Drawing…";
-  $("#castInfo").textContent = "Flow is drawing the portrait and saving the character…";
+  const b = $("#castCreate"); b.disabled = true; b.textContent = "Memeriksa Flow…";
+  $("#castInfo").textContent = "Memeriksa Characters dan kontrol pembuatan. Jangan kirim ulang sebelum memeriksa hasil di Chrome jika operasi gagal.";
   try {
     const out = await api("character", { name, describe: look || undefined, image: castImage ? (castImage.asset ? `asset:${castImage.asset}` : castImage.path) : undefined, personality: $("#castMood").value.trim() || undefined, voice: $("#castVoice").value || undefined });
     $("#castInfo").innerHTML = `Created <b>${esc(out.name)}</b>.${out.portrait ? `<br><img class="out" style="max-width:220px;margin-top:10px;border-radius:12px" src="${media(out.portrait)}">` : ""}`;

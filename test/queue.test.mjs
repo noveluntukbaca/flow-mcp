@@ -33,8 +33,9 @@ test('queue is serial, cancels pending work and retries cancelled jobs', async (
   assert.deepEqual(ran, [first.id, third.id, second.id]);
   assert.equal(second.attempts, 1);
 });
-test('queue retries only known empty-agent failure; ambiguous timeouts are not retried', async () => {
+test('queue retries only a verified zero-cost pre-submit failure; ambiguous timeouts are not retried', async () => {
   const retry = new JobQueue(async job => {
+    job.credits = 0;
     if (job.attempts === 1) throw new Error('Agent finished without creating images');
     return ['fake.png'];
   });
@@ -46,3 +47,21 @@ test('queue retries only known empty-agent failure; ambiguous timeouts are not r
   await idle(ambiguous);
   assert.equal(timed.status, 'failed'); assert.equal(timed.attempts, 1);
 });
+
+for (const scenario of [
+  { label: 'paid video', params: { type: 'video', max_credits: 20 }, credits: 20 },
+  { label: 'unknown cost', params: {}, credits: undefined },
+  { label: 'submitted image with zero quote', params: {}, credits: 0, submitted: true },
+  { label: 'unquoted Agent image batch', params: { agent_scenes: ['fixture'] }, credits: 0 },
+]) {
+  test(`queue never automatically retries ${scenario.label}`, async () => {
+    let calls = 0;
+    const q = new JobQueue(async job => {
+      calls++; job.credits = scenario.credits; job.submissionAttempted = scenario.submitted;
+      throw new Error('Agent finished without creating images');
+    });
+    const job = q.add({ ...params, ...scenario.params, retries: 10 });
+    await idle(q);
+    assert.equal(calls, 1); assert.equal(job.status, 'failed');
+  });
+}

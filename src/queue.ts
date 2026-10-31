@@ -43,6 +43,7 @@ export interface Job {
   files: string[];
   attempts: number;
   credits?: number;
+  submissionAttempted?: boolean;
   progress?: string;
   note?: string;
   error?: string;
@@ -139,9 +140,9 @@ export class JobQueue {
           job.error = undefined;
         } catch (err) {
           job.error = err instanceof Error ? err.message : String(err);
-          // Failed tiles are already retried inside Flow (its own Retry button); only an agent that produced nothing
-          // is re-queued here. Timeouts are never retried automatically: they may still have spent credits.
-          const retryable = /agent finished without creating/i.test(job.error);
+          // Retry only a verified zero-cost failure BEFORE any submit attempt. A click timeout,
+          // paid job, or unquoted Agent batch never proves that no credits were spent.
+          const retryable = !job.submissionAttempted && job.params.type === "image" && job.params.max_credits === 0 && job.credits === 0 && !job.params.agent_scenes && /agent finished without creating/i.test(job.error);
           job.status = retryable && job.attempts <= (job.params.retries ?? 1) ? "queued" : "failed";
         }
         job.finishedAt = new Date().toISOString();
