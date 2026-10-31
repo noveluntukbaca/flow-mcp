@@ -39,8 +39,9 @@ validasi Windows tanpa publikasi/merge otomatis.
 - `src/desktop/csp.ts`: hash script dan kebijakan konten.
 - `desktop/startup.html`, `desktop/startup.css`, `desktop/startup.js`: layar awal.
 - `desktop/preload.cjs`: bridge minimal check/start.
-- `test/desktop.test.mjs`: integrasi backend dan kebijakan keamanan desktop.
+- `test/desktop.test.mjs`: integrasi backend dan kebijakan keamanan desktop, termasuk normalisasi CRLF untuk hash CSP.
 - `test/fixtures/desktop-smoke-backend.mjs`: backend palsu tanpa Chrome/Google.
+- `studio/index.html`: handler tombol dialog/gambar dipindah ke script agar CSP ketat tetap berfungsi.
 - `scripts/desktop-smoke.mjs`: pengujian Electron asli, source/paket unpacked.
 - `README.md`: cara menjalankan dan tautan panduan Windows.
 - `docs/DESKTOP_WINDOWS.md`: instalasi, lifecycle, keamanan, packaging dan checklist.
@@ -86,3 +87,21 @@ memakai fallback lokal di Electron. Temuan moderate dev tooling perlu diperbaiki
 upstream; tidak ada high/critical baru pada audit saat implementasi.
 
 Panduan reproduksi dan checklist manual: [DESKTOP_WINDOWS.md](DESKTOP_WINDOWS.md).
+
+## Bukti CI Windows dan perbaikan lintas platform
+
+Pada commit `7ceec17`, workflow [Windows desktop validation #3](https://github.com/noveluntukbaca/flow-mcp/actions/runs/41206157650)
+lulus: tes offline, audit, smoke Electron, build installer NSIS x64 dan upload
+artefak. Runner: Windows Server 2025; ini bukan pengujian installer terpasang pada
+Windows 10/11. Suite offline Windows: 33 lulus, 1 skip karena FFmpeg/ffprobe tidak
+tersedia. Matrix Linux/Windows × Node 22/24 juga lulus pada commit tersebut.
+
+Validasi menemukan dua masalah yang sudah diperbaiki: trailing backslash argumen
+path pada launcher smoke Windows, serta normalisasi CRLF/LF saat menghitung hash
+CSP sesuai parser HTML Chromium. Smoke dengan HTML CRLF juga lulus di Linux.
+Handler inline tombol dialog/gambar dipindahkan ke script yang di-hash agar CSP
+tetap ketat dan tombol dialog tetap berfungsi; smoke source dan paket Linux
+unpacked mencakup tombol tersebut dan lulus. Hasil CI untuk head PR terbaru dapat
+dilihat pada tab Checks; catatan hasil di atas sengaja menyebut commit yang diuji.
+
+PR review: [#2](https://github.com/noveluntukbaca/flow-mcp/pull/2). Tidak di-merge.

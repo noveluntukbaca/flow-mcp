@@ -42,6 +42,11 @@ try {
   const studio = await nextWindow;
   await studio.waitForURL(`http://127.0.0.1:${port}/`);
   await studio.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Not signed in'));
+  for (const id of ['picker', 'viewer']) {
+    await studio.evaluate(id => document.querySelector(`#${id}`).showModal(), id);
+    await studio.locator(`#${id}Close`).click();
+    assert.equal(await studio.locator(`#${id}`).evaluate(dialog => dialog.open), false);
+  }
   assert.equal(await studio.evaluate(() => typeof window.flowDesktop), 'undefined');
   assert.equal(await studio.evaluate(() => typeof window.require), 'undefined');
   assert.equal(await studio.evaluate(async () => (await fetch('/api/health')).status), 200);

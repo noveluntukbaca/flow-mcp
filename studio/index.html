@@ -429,13 +429,19 @@ audio{width:100%;margin-top:8px;filter:invert(1) hue-rotate(180deg)}
   <button class="roll" id="roll">Roll</button>
 </div></div>
 
-<dialog id="picker"><h2 style="font-size:34px">Pick from Flow</h2><p class="empty">Media already in the open Flow project.</p><div class="lib" id="pickList"></div><div style="margin-top:16px"><button class="btn small ghost" onclick="picker.close()">Close</button></div></dialog>
-<dialog id="viewer"><div class="viewbar"><button type="button" class="btn small ghost" id="viewerTrash" style="border-color:var(--bad);color:var(--bad)">Move to <span data-place="bin">the Mac's Trash</span></button><button type="button" class="btn small" onclick="viewer.close()" autofocus>Close</button></div><div id="viewerBody"></div><p class="empty" id="viewerPath"></p></dialog>
+<dialog id="picker"><h2 style="font-size:34px">Pick from Flow</h2><p class="empty">Media already in the open Flow project.</p><div class="lib" id="pickList"></div><div style="margin-top:16px"><button class="btn small ghost" id="pickerClose">Close</button></div></dialog>
+<dialog id="viewer"><div class="viewbar"><button type="button" class="btn small ghost" id="viewerTrash" style="border-color:var(--bad);color:var(--bad)">Move to <span data-place="bin">the Mac's Trash</span></button><button type="button" class="btn small" id="viewerClose" autofocus>Close</button></div><div id="viewerBody"></div><p class="empty" id="viewerPath"></p></dialog>
 <input type="file" id="file" hidden>
 <script>
 const TOKEN = "__FLOW_TOKEN__";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+// Keep handlers in the hashed script so the desktop CSP can reject inline attributes.
+$("#pickerClose").addEventListener("click", () => $("#picker").close());
+$("#viewerClose").addEventListener("click", () => $("#viewer").close());
+document.addEventListener("error", (event) => {
+  if (event.target instanceof HTMLImageElement && event.target.matches(".cast-card img")) event.target.style.visibility = "hidden";
+}, true);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const LIVE = location.protocol.startsWith("http") && TOKEN !== "__FLOW_" + "TOKEN__";
 const api = async (method, body = {}) => {
@@ -565,7 +571,7 @@ $("#pickList").addEventListener("click", (e) => { const b = e.target.closest("bu
 /* ---------- cast ---------- */
 function renderCast() {
   $("#castList").innerHTML = CAST.length
-    ? CAST.map((c) => `<div class="cast-card"><img src="${media(c.portrait ?? "")}" onerror="this.style.visibility='hidden'"><div class="grow"><b>${esc(c.name)}</b><span class="empty">use in a frame or shot as a reference</span></div>
+    ? CAST.map((c) => `<div class="cast-card"><img src="${media(c.portrait ?? "")}"><div class="grow"><b>${esc(c.name)}</b><span class="empty">use in a frame or shot as a reference</span></div>
         <button class="btn small ghost" data-castuse="${esc(c.name)}">Use</button><button class="btn small ghost" data-castedit="${esc(c.name)}">Edit</button></div>`).join("")
     : `<p class="empty">No characters yet — describe one below and Flow will draw it.</p>`;
   const slot = $('[data-slot="cast"]'); if (slot) slot.outerHTML = slotHtml("cast", 0, castImage, "Picture instead of a description");
