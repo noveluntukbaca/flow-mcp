@@ -170,7 +170,7 @@ server.registerTool(
   {
     title: "Fast image batch via Flow's agent",
     description:
-      "Hand up to 50 image scenes to Flow's own Agent mode, which renders them all in parallel (minutes for a whole batch instead of one paced job per scene) and enriches each prompt itself. Images only, 0 credits. Pass `references` (characters, places, objects, each with a short name) to attach them once in the agent's composer, the way its + button does, and `scene_references` to say which scenes use which, so a whole story stays on-model. Scenes the agent drops are asked for again, then made one by one with their references. Less exact than flow_generate: the agent picks the wording, no techniques, and each image is matched back to its scene by its stored prompt. Returns a job id; use flow_wait.",
+      "Hand up to 50 image scenes to Flow's own Agent mode, which renders them all in parallel (minutes for a whole batch instead of one paced job per scene) and enriches each prompt itself. Images only; availability and cost depend on Flow. Pass `references` (characters, places, objects, each with a short name) to attach them once in the agent's composer, the way its + button does, and `scene_references` to say which scenes use which, so a whole story stays on-model. Incomplete results are not resubmitted automatically: inspect Flow and credits before explicitly calling flow_retry. Less exact than flow_generate: the agent picks the wording, no techniques, and each image is matched back to its scene by its stored prompt. Returns a job id; use flow_wait.",
     inputSchema: shapes.agent,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },

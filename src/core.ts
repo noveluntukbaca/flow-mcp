@@ -329,11 +329,12 @@ export const VOICES = [
   { name: "Iapetus", description: "male, clear, mid-low pitch" },
 ];
 
-const BUSY = "A generation is running in the Flow tab. Wait for it to finish (flow_wait), then retry.";
+const BUSY = "Flow sedang mengerjakan operasi lain. Tunggu hingga selesai sebelum mencoba lagi; tidak ada retry otomatis.";
 
 export class LocalCore implements Core {
+  private characterWorking = false;
   // Desktop shutdown must wait for queued/running work without polling Google Flow.
-  get busy(): boolean { return this.queue.list().some(job => job.status === "queued" || job.status === "running"); }
+  get busy(): boolean { return this.characterWorking || this.queue.list().some(job => job.status === "queued" || job.status === "running"); }
 
   private queue: JobQueue = new JobQueue(async (job) => {
     const { chain_from, reference_from } = job.params;
@@ -354,11 +355,12 @@ export class LocalCore implements Core {
   });
 
   async status({ detailed }: Args<"status">) {
-    const flow = await getFlowState(detailed && !this.queue.busy);
+    const flow = await getFlowState(detailed && !this.busy);
     return { flow, pacing: this.queue.pausedReason, output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
   }
 
   async generate({ project, scenes }: Args<"generate">) {
+    if (this.characterWorking) throw new Error(BUSY);
     const invalid = scenes.findIndex((s, i) => s.chain_previous && (i === 0 || s.first_frame || s.type === "image"));
     if (invalid >= 0) {
       throw new Error(`Scene ${invalid + 1}: chain_previous needs a preceding video scene in the same call and cannot be combined with first_frame.`);
@@ -425,6 +427,7 @@ export class LocalCore implements Core {
   }
 
   async retry({ job_ids }: Args<"retry">) {
+    if (this.characterWorking) throw new Error(BUSY);
     const ids = job_ids ?? this.queue.list().filter((j) => j.status === "failed" || j.failed_scenes?.length).map((j) => j.id);
     const jobs: Job[] = [];
     for (const id of ids) {
@@ -457,12 +460,12 @@ export class LocalCore implements Core {
   }
 
   async assets({ kind }: Args<"assets">) {
-    if (this.queue.busy) throw new Error(BUSY);
+    if (this.busy) throw new Error(BUSY);
     return (await listAssets()).filter((a) => !kind || a.kind === kind).map(({ name, kind }) => ({ name, kind }));
   }
 
   async download({ project, assets, quality }: Args<"download">) {
-    if (this.queue.busy) throw new Error(BUSY);
+    if (this.busy) throw new Error(BUSY);
     const dir = projectDir(project);
     mkdirSync(dir, { recursive: true });
     const files: string[] = [];
@@ -542,6 +545,7 @@ export class LocalCore implements Core {
   }
 
   async agent({ project, scenes, aspect_ratio, download_quality, references, scene_references }: Args<"agent">) {
+    if (this.characterWorking) throw new Error(BUSY);
     const output_dir = projectDir(project);
     if (scene_references && scene_references.length !== scenes.length) {
       throw new Error(`scene_references has ${scene_references.length} entries for ${scenes.length} scenes; give one list per scene (empty for none).`);
@@ -568,6 +572,7 @@ export class LocalCore implements Core {
   }
 
   async edit({ project, asset, prompt, download_quality }: Args<"edit">) {
+    if (this.characterWorking) throw new Error(BUSY);
     const output_dir = projectDir(project);
     const job = this.queue.add({ prompt, type: "video", max_credits: 0, edit_asset: asset, download_quality, output_dir, file_stem: this.nextStem(output_dir, "edit") });
     return { output_dir, jobs: [jobView(job)] };
@@ -575,6 +580,7 @@ export class LocalCore implements Core {
 
   // Flow's composer takes a start frame OR a character, never both; agent mode takes both, so this goes that way.
   async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, mode, download_quality, force }: Args<"continue_shot">) {
+    if (this.characterWorking) throw new Error(BUSY);
     // A lost queue entry is not proof that nothing ran: when the owner process is replaced mid-job the job vanishes
     // while Flow carries on and charges for it. Re-running then spends twice, which is exactly what happened on
     // 2026-09-20. Flow's own grid is the only honest record, so ask it before starting another paid generation.
@@ -617,30 +623,36 @@ export class LocalCore implements Core {
   }
 
   async trash({ name }: Args<"trash">) {
-    if (this.queue.busy) throw new Error(BUSY);
+    if (this.busy) throw new Error(BUSY);
     return trashAsset(name);
   }
 
   async character(a: Args<"character">) {
-    if (this.queue.busy) throw new Error(BUSY);
+    if (this.busy) throw new Error(BUSY);
     if (!a.image && !a.describe) throw new Error("Pass either `describe` (Flow draws the portrait) or `image`.");
-    const made = await createCharacter(a);
-    if (a.describe) rememberCharacter(a.name, a.describe);
-    return { ...made, use_as: `asset:${a.name}` };
+    this.characterWorking = true;
+    try {
+      const made = await createCharacter(a);
+      if (a.describe) rememberCharacter(a.name, a.describe);
+      return { ...made, use_as: `asset:${a.name}` };
+    } finally { this.characterWorking = false; }
   }
 
   async character_edit({ name, change, look }: Args<"character_edit">) {
-    if (this.queue.busy) throw new Error(BUSY);
-    const out = await editCharacter(name, change);
-    // Every scene that references the character quotes this description in its character lock, so it has to describe
-    // the NEW look - "deep navy coat" left in it would argue with a portrait whose coat is now red.
-    if (look) rememberCharacter(name, look);
-    else if (change) rememberCharacter(name, `${characterLook(name) ?? ""} Changed since, and this wins over anything above: ${change.replace(/[.\s]+$/, "")}`.trim());
-    return { ...out, use_as: `asset:${name}` };
+    if (this.busy) throw new Error(BUSY);
+    this.characterWorking = true;
+    try {
+      const out = await editCharacter(name, change);
+      // Every scene that references the character quotes this description in its character lock, so it has to describe
+      // the NEW look - "deep navy coat" left in it would argue with a portrait whose coat is now red.
+      if (look) rememberCharacter(name, look);
+      else if (change) rememberCharacter(name, `${characterLook(name) ?? ""} Changed since, and this wins over anything above: ${change.replace(/[.\s]+$/, "")}`.trim());
+      return { ...out, use_as: `asset:${name}` };
+    } finally { this.characterWorking = false; }
   }
 
   async characters() {
-    if (this.queue.busy) throw new Error(BUSY);
+    if (this.busy) throw new Error(BUSY);
     return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
   }
 

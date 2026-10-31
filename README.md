@@ -296,3 +296,9 @@ suite and `npm run desktop:smoke` use no Google services or credits.
 `npm run package:win` prepares a Windows x64 NSIS installer with no automatic
 publishing. Installer compatibility and signing remain unvalidated. See
 [Windows desktop installation, security and testing](docs/DESKTOP_WINDOWS.md).
+
+If CREATE CHARACTER fails while waiting for an `Agent` button, see
+[Flow character UI compatibility and offline fixtures](docs/FLOW_CHARACTER_COMPATIBILITY.md).
+Ordinary image/character creation no longer requires Agent when the standard
+composer is recognised. Unsupported native forms stop with a clear message;
+failed or ambiguous submitted generations are not automatically resubmitted.

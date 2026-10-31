@@ -1,0 +1,19 @@
+{
+  "note": "Synthetic semantic controls, not a captured Google UI. New labels require manual verification.",
+  "url": "https://flow.google.com/project/offline-project",
+  "elements": [
+    {"id":"chars","role":"tab","name":"Characters","action":"characters"},
+    {"id":"prompt","selector":".ProseMirror[contenteditable=true]"},
+    {"id":"settings","role":"button","name":"Settings trigger"},
+    {"id":"start","role":"button","name":"Start generation"},
+    {"id":"old-agent","role":"button","name":"Agent","visible":false,"attrs":{"aria-pressed":"true"}}
+  ],
+  "characters": [
+    {"id":"new","role":"button","name":"Create character","action":"creation"}
+  ],
+  "creation": [
+    {"id":"heading","role":"heading","name":"Create character"},
+    {"id":"upload","role":"button","name":"Upload image"},
+    {"id":"asset","role":"button","name":"Add from project"}
+  ]
+}

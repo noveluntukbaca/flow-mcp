@@ -1,3 +1,4 @@
+import { FlowUiError, UI_TIMEOUT, assertProject, projectRoot, prepareCharacterCreation, characterUploadControl, openCharacters, setAgentModeCompatible, uniqueVisible } from "./flow-ui.js";
 import { outputPath, OUTPUT_ROOT } from "./paths.js";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -162,7 +163,7 @@ export async function newErrorTiles(page: Page, known: Iterable<string>): Promis
   }, [[...known], TILE_ID_JS] as [string[], string]);
 }
 
-// Flow's Retry replaces the failed tile with a fresh render of the same prompt and settings, free of charge.
+// Retry may dispatch another generation. Only explicit callers may request it; cost is never assumed free.
 // Tiles produced by Agent mode only offer Delete, so the button may not be there at all.
 async function retryErrorTile(page: Page, tile: Locator): Promise<boolean> {
   await hoverTile(page, tile);
@@ -180,7 +181,7 @@ async function retryErrorTile(page: Page, tile: Locator): Promise<boolean> {
 export async function retryNewErrorTiles(
   page: Page,
   known: Iterable<string>,
-  dryRun = false,
+  dryRun = true,
 ): Promise<{ errors: number; reachedKnown: boolean; retried: number }> {
   const ids = [...known];
   let errors = 0;
@@ -260,9 +261,8 @@ export async function freshMedia(page: Page, before: string[], kind?: MediaKind)
   return [...new Set(ours.map((t) => t.id!))];
 }
 
-async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job, kind?: MediaKind): Promise<string[]> {
+export async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job, kind?: MediaKind): Promise<string[]> {
   const deadline = Date.now() + timeoutMs;
-  let retriesLeft = job?.params.retries ?? 1;
   let failures = 0;
   let seen = "";
   while (Date.now() < deadline) {
@@ -286,16 +286,10 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
     const errors = progress.length ? 0 : await newErrorTiles(page, before);
     if (!errors) continue;
     failures += errors;
-    if (retriesLeft > 0) {
-      retriesLeft--;
-      if (job) job.progress = "Flow failed, retrying";
-      const retried = await retryErrorTile(page, page.locator("flow-grid-tile-container:has(flow-error-tile)").first());
-      if (retried) continue;
-    }
     if (fresh.length) return fresh;
-    throw new Error(`Flow failed this generation ${failures} time(s) ("Sorry, this image/video failed to generate"). Nothing was charged. Try again later or reword the prompt.`);
+    throw new Error(`Flow failed this generation ${failures} time(s) ("Sorry, this image/video failed to generate"). Biaya tidak dapat dipastikan. Periksa hasil dan kredit di Chrome; tidak ada retry otomatis.`);
   }
-  throw new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for Flow to finish.`);
+  throw new FlowUiError("FLOW_GENERATION_TIMEOUT", `Batas waktu ${Math.round(timeoutMs / 1000)} detik terlewati saat menunggu hasil Flow.`, true);
 }
 
 async function openSettings(page: Page): Promise<void> {
@@ -723,13 +717,6 @@ async function leaveSideMenu(page: Page): Promise<void> {
     })
     .catch(() => {});
 }
-async function openProjectNav(page: Page, item: string): Promise<void> {
-  if (await clickProjectNav(page, item)) return;
-  // A page load shows the menu again in whatever state the user keeps it, and changes nothing about that choice.
-  await page.goto(inEnglish(page.url()), { waitUntil: "domcontentloaded" });
-  await pause(page, 3000);
-  if (!(await clickProjectNav(page, item))) throw new Error(`Flow's left-hand menu is not showing, so "${item}" could not be opened. Show the menu in the Flow window and try again.`);
-}
 
 // All media: through the left-hand menu when it shows. When it does not (collapsed and scrolled away), the top bar's
 // Filter menu does the same job: nothing ticked, newest first. `thorough` (the start of a job) checks that menu; a
@@ -757,7 +744,7 @@ async function showAllMedia(page: Page, thorough = false): Promise<void> {
 
 async function ensureProjectGrid(page: Page): Promise<void> {
   await dismissOverlays(page);
-  const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
+  const root = projectRoot(page.url());
   // Compared by path: an address ending in ?hl=en is already the grid.
   if (root && new URL(page.url()).pathname !== new URL(root).pathname) {
     await page.goto(inEnglish(root), { waitUntil: "domcontentloaded" });
@@ -776,16 +763,14 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+  await closeAgentSettings(page);
+  await setAgentModeCompatible(page, false);
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
 
   job.credits = await applySettings(page, job);
   if (job.credits > s.max_credits) {
-    throw new Error(
-      `Flow quotes ${job.credits} credits for this scene, above max_credits=${s.max_credits}. Nothing was generated. Raise max_credits or pick a cheaper model/duration/variants.`,
-    );
+    throw new FlowUiError("FLOW_CREDIT_LIMIT", `Kutipan Flow ${job.credits} kredit melampaui batas ${s.max_credits}. Pilih model/durasi yang sesuai sebelum mencoba lagi.`);
   }
 
   if (s.first_frame) {
@@ -818,7 +803,8 @@ export async function runGeneration(job: Job): Promise<string[]> {
   if (!(await start.isEnabled())) throw new Error("Flow's Start generation button is disabled; the prompt or inputs were not accepted.");
   await scrollToTop(page);
   const before = await mediaIds(page);
-  await start.click();
+  if (job) job.submissionAttempted = true;
+  await start.click({ timeout: UI_TIMEOUT });
 
   const variants = s.variants ?? 1;
   const fresh = await waitForNewMedia(page, before, variants, s.type === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS, job, s.type === "image" ? "image" : "video");
@@ -899,7 +885,7 @@ export async function listCharacters(): Promise<string[]> {
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
   await dismissOverlays(page);
-  await openProjectNav(page, "Characters");
+  await openCharacters(page);
   await pause(page, 2500);
   const names = await page.evaluate(() =>
     [...document.querySelectorAll("flow-character-tile")].map((t) => (t as HTMLElement).innerText.replace(/\s+/g, " ").trim()).filter(Boolean),
@@ -956,14 +942,15 @@ export async function editCharacter(name: string, change?: string, job?: Job): P
   const page = await getFlowPage();
   await leaveCharacterEditor(page);
   await dismissOverlays(page);
-  await openProjectNav(page, "Characters");
+  await openCharacters(page);
   await pause(page, 2500);
 
   const card = page.locator("flow-character-tile").filter({ hasText: name }).first();
   if (!(await card.isVisible().catch(() => false))) throw new Error(`No character called "${name}". Use flow_characters to list them.`);
   await card.scrollIntoViewIfNeeded();
-  await card.click();
-  await page.waitForURL(/\/character\/[0-9a-f-]{36}/, { timeout: 20_000 });
+  const expectedProject = assertProject(page);
+  await card.click({ timeout: UI_TIMEOUT });
+  await page.waitForURL(url => projectRoot(url.href) === expectedProject && /\/characters?\/[^/]+\/?$/.test(url.pathname), { timeout: 10_000 });
   await pause(page, 2000);
 
   if (change) {
@@ -982,7 +969,8 @@ export async function editCharacter(name: string, change?: string, job?: Job): P
     await pause(page, 600);
     const start = page.getByRole("button", { name: "Start generation" });
     if (!(await start.isEnabled())) throw new Error("Flow did not accept the change (Start generation stayed disabled).");
-    await start.click();
+    if (job) job.submissionAttempted = true;
+  await start.click({ timeout: UI_TIMEOUT });
 
     const deadline = Date.now() + 4 * 60_000;
     for (;;) {
@@ -1149,97 +1137,126 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
-  // A description generates the portrait first (free image), then the character is built from that picture.
-  let portrait: string | undefined;
-  if (!c.image) {
-    if (!c.describe) throw new Error("Pass either an image or a description for the character.");
-    if (job) job.progress = "drawing the character";
-    const dir = outputPath(join(OUTPUT_ROOT, "_cast"));
-    const made = await runGeneration({
-      ...(job ?? ({ id: "char", status: "running", files: [], attempts: 1, createdAt: "" } as unknown as Job)),
-      files: [],
-      params: {
-        prompt: c.describe,
-        type: "image",
-        max_credits: 0,
-        aspect_ratio: (c.aspect_ratio as "3:4") ?? "3:4",
-        output_dir: dir,
-        file_stem: c.name.replace(/[^\w.-]+/g, "_"),
-      },
-    } as Job);
-    portrait = made[0];
-    c = { ...c, image: portrait };
-  }
-  const image = c.image!;
-  const projectUrl = page.url();
+  return createCharacterOnPage(page, c, job);
+}
+
+// Exposed for offline fixture tests; normal callers always obtain the external Flow tab above.
+export async function createCharacterOnPage(page: Page, c: CharacterParams, job?: Job,
+  drawPortrait: typeof runGeneration = runGeneration): Promise<{ name: string; url: string; portrait?: string; note?: string }> {
+  if (!c.image && !c.describe) throw new FlowUiError("FLOW_CHARACTER_INPUT", "Berikan gambar atau deskripsi karakter.");
+  if (c.image && !c.image.startsWith(ASSET_PREFIX) && !existsSync(c.image)) throw new FlowUiError("FLOW_CHARACTER_IMAGE_MISSING", "File gambar karakter tidak ditemukan.");
   await dismissOverlays(page);
-  await scrollToTop(page);
+  const projectUrl = await prepareCharacterCreation(page, c.image?.startsWith(ASSET_PREFIX) ? "asset" : "image");
+  let submitted = false;
+  let createdUrl: string | undefined;
+  let portrait: string | undefined;
+  try {
+    // Draw only after verifying Characters offers a supported image-based creation path.
+    if (!c.image) {
+      if (!c.describe) throw new FlowUiError("FLOW_CHARACTER_INPUT", "Berikan gambar atau deskripsi karakter.");
+      if (job) job.progress = "drawing the character";
+      const dir = outputPath(join(OUTPUT_ROOT, "_cast"));
+      await page.goto(inEnglish(projectUrl), { waitUntil: "domcontentloaded", timeout: 15_000 });
+      assertProject(page, projectUrl);
+      // A timeout after this call can mean a portrait already exists. Never repeat it automatically.
+      const portraitJob = {
+        ...(job ?? ({ id: "char", status: "running", files: [], attempts: 1, createdAt: "" } as unknown as Job)),
+        files: [],
+        params: {
+          prompt: c.describe,
+          type: "image",
+          max_credits: 0,
+          aspect_ratio: (c.aspect_ratio as "3:4") ?? "3:4",
+          output_dir: dir,
+          file_stem: c.name.replace(/[^\w.-]+/g, "_"),
+        },
+      } as Job;
+      let made: string[];
+      try { made = await drawPortrait(portraitJob); }
+      finally { submitted ||= Boolean(portraitJob.submissionAttempted); }
+      portrait = made[0];
+      submitted ||= Boolean(portrait);
+      if (!portrait) throw new FlowUiError("FLOW_CHARACTER_PORTRAIT_MISSING", "Flow tidak mengembalikan file potret.", true);
+      c = { ...c, image: portrait };
+      assertProject(page, projectUrl);
+      await prepareCharacterCreation(page, "image");
+    }
+    const image = c.image!;
+    await dismissOverlays(page);
+    await scrollToTop(page);
 
-  await openProjectNav(page, "Characters");
-  await pause(page, 1500);
-  // With no characters yet Flow jumps straight to the creation page.
-  const create = page.getByRole("button", { name: "New character" });
-  if (await create.isVisible().catch(() => false)) await create.click();
-  await page.waitForURL(/\/character$/, { timeout: 15_000 });
+    assertProject(page, projectUrl);
 
-  if (image.startsWith(ASSET_PREFIX)) {
-    const title = image.slice(ASSET_PREFIX.length).trim();
-    await page.getByRole("button", { name: "Add from project", exact: true }).click();
-    const list = page.getByRole("listbox", { name: "Asset list" });
-    await list.waitFor({ state: "visible", timeout: 10_000 });
-    let option = optionByName(list, title);
-    if (!(await option.isVisible().catch(() => false))) {
-      await page.getByRole("tab", { name: "Uploads" }).click();
+    if (image.startsWith(ASSET_PREFIX)) {
+      const title = image.slice(ASSET_PREFIX.length).trim();
+      const add = await uniqueVisible(page.getByRole("button", { name: /^(Add from project|Tambahkan dari proyek)$/i }), "gambar proyek");
+      if (!add) throw new FlowUiError("FLOW_CHARACTER_ASSET_UNAVAILABLE", "Pemilih gambar proyek tidak tersedia.");
+      await add.click({ timeout: UI_TIMEOUT });
+      const list = page.getByRole("listbox", { name: "Asset list" });
+      await list.waitFor({ state: "visible", timeout: 10_000 });
+      let option = optionByName(list, title);
+      if (!(await option.isVisible().catch(() => false))) {
+        await page.getByRole("tab", { name: "Uploads" }).click({ timeout: UI_TIMEOUT });
+        await pause(page, 1000);
+        option = optionByName(list, title);
+      }
+      if (!(await option.isVisible().catch(() => false))) {
+        await page.keyboard.press("Escape");
+        throw new FlowUiError("FLOW_CHARACTER_ASSET_MISSING", "Gambar yang dipilih tidak ditemukan dalam proyek. Periksa judul melalui flow_assets.");
+      }
+      await option.click({ timeout: UI_TIMEOUT });
+      submitted = true;
+      await page.getByRole("button", { name: "Add media", exact: true }).click({ timeout: UI_TIMEOUT });
+    } else {
+      if (!existsSync(image)) throw new Error(`File not found: ${image}`);
+      const upload = await characterUploadControl(page);
+      const [chooser] = await Promise.all([
+        page.waitForEvent("filechooser", { timeout: UI_TIMEOUT }),
+        upload.click({ timeout: UI_TIMEOUT }),
+      ]);
+      submitted = true;
+      await chooser.setFiles(image, { timeout: UI_TIMEOUT });
+    }
+    await page.waitForURL(url => projectRoot(url.href) === projectUrl && /\/characters?\/(?!new\/?$|create\/?$)[^/]+\/?$/.test(url.pathname), { timeout: 30_000 });
+    const url = page.url();
+    createdUrl = url;
+
+    const name = page.getByRole("textbox", { name: /^(Character name|Nama karakter)$/i });
+    await name.waitFor({ state: "visible", timeout: UI_TIMEOUT });
+    await name.fill(c.name, { timeout: UI_TIMEOUT });
+    await name.press("Enter", { timeout: UI_TIMEOUT });
+    if (c.personality) await page.getByRole("textbox", { name: "Character personality" }).fill(c.personality, { timeout: UI_TIMEOUT });
+
+    if (c.voice) {
+      await page.getByRole("button", { name: "Select a voice" }).click({ timeout: UI_TIMEOUT });
+      const voices = page.getByRole("listbox", { name: "Asset list" });
+      await voices.waitFor({ state: "visible", timeout: 10_000 });
+      const option = optionByName(voices, c.voice);
+      if (!(await option.isVisible().catch(() => false))) {
+        const available = (await voices.getByRole("option").allInnerTexts()).map((t) => t.split("\n").filter((l) => l && l !== "voice_selection").join(" - "));
+        await page.getByRole("dialog").getByRole("button", { name: "Close" }).click({ timeout: UI_TIMEOUT });
+        throw new FlowUiError("FLOW_CHARACTER_VOICE_MISSING", `Karakter sudah dibuat, tetapi suara yang dipilih tidak tersedia. Pilih suara yang tersedia atau edit secara manual. Pilihan: ${available.join("; ")}`, true);
+      }
+      await option.click({ timeout: UI_TIMEOUT });
+      // "Customize performance" would turn this into generating a new voice (preview + save); stock voices only.
+      await page.getByRole("button", { name: "Add to character", exact: true }).click({ timeout: UI_TIMEOUT });
       await pause(page, 1000);
-      option = optionByName(list, title);
     }
-    if (!(await option.isVisible().catch(() => false))) {
-      await page.keyboard.press("Escape");
-      throw new Error(`No image titled "${title}" in the Flow project. Use flow_assets to list titles.`);
-    }
-    await option.click();
-    await page.getByRole("button", { name: "Add media", exact: true }).click();
-  } else {
-    if (!existsSync(image)) throw new Error(`File not found: ${image}`);
-    const chooser = page.waitForEvent("filechooser", { timeout: 10_000 });
-    await page.getByRole("button", { name: "Upload", exact: true }).click();
-    await (await chooser).setFiles(image);
-  }
-  await page.waitForURL(/\/character\/[0-9a-f-]{36}/, { timeout: 90_000 });
-  const url = page.url();
 
-  const name = page.getByRole("textbox", { name: "Character name" });
-  await name.waitFor({ state: "visible", timeout: 15_000 });
-  await name.fill(c.name);
-  await name.press("Enter");
-  if (c.personality) await page.getByRole("textbox", { name: "Character personality" }).fill(c.personality);
-
-  if (c.voice) {
-    await page.getByRole("button", { name: "Select a voice" }).click();
-    const voices = page.getByRole("listbox", { name: "Asset list" });
-    await voices.waitFor({ state: "visible", timeout: 10_000 });
-    const option = optionByName(voices, c.voice);
-    if (!(await option.isVisible().catch(() => false))) {
-      const available = (await voices.getByRole("option").allInnerTexts()).map((t) => t.split("\n").filter((l) => l && l !== "voice_selection").join(" - "));
-      await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
-      throw new Error(`Voice "${c.voice}" not found. Character was created without a voice. Available: ${available.join("; ")}`);
-    }
-    await option.click();
-    // "Customize performance" would turn this into generating a new voice (preview + save); stock voices only.
-    await page.getByRole("button", { name: "Add to character", exact: true }).click();
+    // Flow labels this "Done editing" or just "Done" depending on the panel state.
+    await page.getByRole("button", { name: /^Done( editing)?$/ }).first().click({ timeout: UI_TIMEOUT });
+    await page.waitForURL((u) => projectRoot(u.href) === projectUrl && !/\/characters?(\/|$)/.test(u.pathname), { timeout: 10_000 });
     await pause(page, 1000);
+    // Flow drops the new character into the composer; leave the composer empty for the next job.
+    const clear = page.getByRole("button", { name: "Clear prompt" });
+    if (await clear.isVisible().catch(() => false)) await clear.click();
+    await showAllMedia(page);
+    if (c.describe) rememberCharacter(c.name, c.describe);
+    return { name: c.name, url, portrait };
+  } catch (error) {
+    const detail = error instanceof FlowUiError ? error.detail : "Kontrol karakter tidak tersedia, navigasi berubah, atau Flow melewati batas waktu.";
+    throw new FlowUiError("FLOW_CHARACTER_INCOMPLETE", `${detail}${portrait ? ` Potret sudah tersedia di ${portrait}; gunakan gambar itu untuk melanjutkan, jangan menggambar ulang.` : ""}${createdUrl ? " Karakter mungkin sudah dibuat; periksa Characters dan gunakan Reload sebelum mencoba lagi." : ""}`, submitted);
   }
-
-  // Flow labels this "Done editing" or just "Done" depending on the panel state.
-  await page.getByRole("button", { name: /^Done( editing)?$/ }).first().click();
-  await page.waitForURL((u) => !/\/character/.test(u.pathname), { timeout: 15_000 }).catch(() => page.goto(inEnglish(projectUrl)));
-  await pause(page, 1000);
-  // Flow drops the new character into the composer; leave the composer empty for the next job.
-  const clear = page.getByRole("button", { name: "Clear prompt" });
-  if (await clear.isVisible().catch(() => false)) await clear.click();
-  await showAllMedia(page);
-  if (c.describe) rememberCharacter(c.name, c.describe);
-  return { name: c.name, url, portrait };
 }
 
 const EDIT_TIMEOUT_MS = 10 * 60_000;
@@ -1277,7 +1294,8 @@ export async function runEdit(job: Job): Promise<string[]> {
   await pause(page, 600);
   const start = page.getByRole("button", { name: "Start generation" });
   if (!(await start.isEnabled())) throw new Error("Flow did not accept the edit prompt (Start generation stayed disabled).");
-  await start.click();
+  if (job) job.submissionAttempted = true;
+  await start.click({ timeout: UI_TIMEOUT });
 
   // Progress shows as "NN% <prompt>" inside the edit view and disappears when the edit is ready.
   const deadline = Date.now() + EDIT_TIMEOUT_MS;
@@ -1310,23 +1328,9 @@ export async function runEdit(job: Job): Promise<string[]> {
 // mode on then breaks the NEXT job, which expects the plain composer - a free character build failed that way. So this
 // confirms the toggle actually landed rather than assuming the click worked.
 async function setAgentMode(page: Page, on: boolean): Promise<void> {
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
-  // Playwright says why a click did not land ("<div ...> intercepts pointer events", "element is not visible"); keep
-  // that, so a failure names what was in the way instead of guessing.
-  let why = "";
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await clearBackdrops(page);
-    await closeAgentSettings(page);
-    if (((await agent.getAttribute("aria-pressed").catch(() => null)) === "true") === on) return;
-    await agent.click({ timeout: 8000 }).catch((err: Error) => {
-      const lines = err.message.split("\n").map((l) => l.trim());
-      why = (lines.find((l) => /intercepts pointer events|not visible|not enabled|detached|not stable/.test(l)) ?? lines[0]).slice(0, 200);
-    });
-    await pause(page, 1500);
-  }
-  if (((await agent.getAttribute("aria-pressed").catch(() => null)) === "true") !== on) {
-    throw new Error(`Could not switch Agent mode ${on ? "on" : "off"}${why ? ` (${why})` : "; the click landed but the toggle did not change"}.`);
-  }
+  await clearBackdrops(page);
+  await closeAgentSettings(page);
+  await setAgentModeCompatible(page, on);
 }
 
 // "Never" lets the agent generate without asking; it is switched back to "Always" as soon as the batch ends.
@@ -1424,7 +1428,6 @@ async function agentRound(
   job: Job,
   scenes: string[],
   indexes: number[],
-  retry: boolean,
   files: string[],
   done: Set<number>,
 ): Promise<RoundOutcome> {
@@ -1467,16 +1470,15 @@ async function agentRound(
       `Whenever a scene shows one of them, keep it exactly as it looks in its reference (face, hair, clothing, shape, colours), ` +
       `but stage each scene as its own description says; the references are for likeness only, never copy their pose or background.`
     : "";
-  const lead = retry
-    ? `${indexes.length} image(s) from the last batch failed to generate. Generate them again now, one image per scene`
-    : `Generate exactly ${indexes.length} separate images, one image per scene, in scene order`;
+  const lead = `Generate exactly ${indexes.length} separate images, one image per scene, in scene order`;
   const ask = `${lead}. Images only, never video. ${aspect} aspect ratio. Do not ask questions, generate them now.${legend} ${script}`;
   await page.locator(".ProseMirror").first().click();
   await page.keyboard.insertText(ask);
   await pause(page, 800);
   const start = page.getByRole("button", { name: "Start generation" });
   if (!(await start.isEnabled())) throw new Error("Flow's agent did not accept the script (Start generation stayed disabled).");
-  await start.click();
+  if (job) job.submissionAttempted = true;
+  await start.click({ timeout: UI_TIMEOUT });
 
   // The agent shows a Stop button while it works and "NN%" on every tile it is rendering.
   const deadline = Date.now() + (3 * 60_000 + indexes.length * 30_000);
@@ -1625,7 +1627,8 @@ export async function runContinue(job: Job): Promise<string[]> {
     );
     const before = await mediaIds(page);
     job.progress = "generating";
-    await page.getByRole("button", { name: "Start generation" }).click();
+    job.submissionAttempted = true;
+    await page.getByRole("button", { name: "Start generation" }).click({ timeout: UI_TIMEOUT });
 
     // The agent sometimes still stops to ask which tool to use. Nobody is watching an unattended run, so answer it.
     for (let i = 0; i < 12; i++) {
@@ -1678,10 +1681,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
 
   const files: string[] = [];
   const done = new Set<number>();
-  let agentTimedOut = false;
-  let failedTiles = 0;
-  let agentRetries = 0;
-  let agentProblem = "";
+  let agentSettingsChanged = false;
   try {
     // References are uploaded once with readable names (the agent sees them), before Agent mode hides the upload menu.
     if (s.agent_refs?.length && !s.agent_ref_assets?.length) {
@@ -1697,102 +1697,30 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
     step(job, "switching Agent mode on");
     await setAgentMode(page, true);
     step(job, "setting the agent to generate without asking");
+    agentSettingsChanged = true;
     await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
-    for (let round = 0; round < 3; round++) {
-      const todo = scenes.map((_, i) => i).filter((i) => !done.has(i));
-      if (!todo.length) break;
-      if (round) {
-        agentRetries += todo.length;
-        job.progress = `asking the agent again for ${todo.length} scene(s)`;
-      }
-      const out = await agentRound(page, job, scenes, todo, round > 0, files, done);
-      agentTimedOut ||= out.timedOut;
-      failedTiles = out.failedTiles;
-      if (!out.produced) break; // the agent delivered nothing this round: stop asking it
-    }
+    await agentRound(page, job, scenes, scenes.map((_, i) => i), files, done);
   } catch (err) {
-    // Agent mode could not be used (2026-10-13: "Could not switch Agent mode on" failed a whole 11-image batch with
-    // nothing made). Whatever the agent did not deliver is made one by one below instead: slower, but the batch still
-    // ends with every image.
-    agentProblem = (err as Error).message;
+    job.files = [...files];
+    if (err instanceof FlowUiError) throw err;
+    throw new FlowUiError("FLOW_AGENT_INCOMPLETE", "Operasi Agent gagal atau hasilnya belum dapat dipastikan.", Boolean(job.submissionAttempted));
   } finally {
     step(job, "putting the agent settings back");
     await ensureProjectGrid(page).catch(() => {});
     await closeAgentSession(page).catch(() => {});
-    await setAgentMode(page, true).catch(() => {});
-    await setAgentSettings(page, "Always").catch(() => {});
+    if (agentSettingsChanged) await setAgentSettings(page, "Always").catch(() => {});
     await setAgentMode(page, false).catch(() => {});
   }
 
-  // Anything the agent still has not delivered is generated one by one, which is slower but exact.
-  const missing = scenes.map((_, i) => i).filter((i) => !done.has(i));
-  const failed: number[] = [];
-  const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
-  const numberOf = (i: number) => s.agent_numbers?.[i] ?? base + i;
-  const stillFails = Number(process.env.FLOW_MCP_SIMULATE_FAILED ?? 0); // test hook: pretend this scene failed for good
-  // A scene made one by one keeps its references: the uploaded copies when there are some, else the original files.
-  const refsFor = (i: number): string[] | undefined => {
-    const refs = s.agent_refs ?? [];
-    if (!refs.length) return undefined;
-    const uses = s.agent_scene_refs?.[i];
-    const picked = refs
-      .map((r, k) => ({ r, k }))
-      .filter(({ r }) => !uses || uses.some((u) => u.toLowerCase() === r.name.toLowerCase()))
-      .slice(0, 3);
-    return picked.length ? picked.map(({ r, k }) => (s.agent_ref_assets?.[k] ? `${ASSET_PREFIX}${s.agent_ref_assets[k]}` : r.image)) : undefined;
-  };
-  for (const [n, i] of missing.entries()) {
-    job.progress = `re-running scene ${numberOf(i)} one by one (${n + 1}/${missing.length})`;
-    if (numberOf(i) === stillFails && !job.params.agent_numbers) {
-      failed.push(numberOf(i));
-      continue;
-    }
-    const single: Job = {
-      ...job,
-      files: [],
-      params: {
-        prompt: scenes[i],
-        type: "image",
-        max_credits: 0,
-        reference_images: refsFor(i),
-        aspect_ratio: s.aspect_ratio,
-        download_quality: s.download_quality,
-        output_dir: s.output_dir,
-        file_stem: `scene-${String(numberOf(i)).padStart(2, "0")}`,
-      },
-    };
-    let ok = false;
-    for (let attempt = 0; attempt < 2 && !ok; attempt++) {
-      if (attempt || n) await pause(page, 8000);
-      try {
-        files.push(...(await runGeneration(single)));
-        ok = true;
-      } catch {
-        /* one more attempt, then give up on this scene */
-      }
-    }
-    if (!ok) failed.push(numberOf(i));
-  }
-  job.failed_scenes = failed.length ? failed : undefined;
-  step(job, "reading the credit balance");
-  const left = await readCredits(page).catch(() => undefined);
+  // Agent does not quote credits. An incomplete/ambiguous result must never trigger another dispatch.
+  const missing = scenes.map((_, i) => i).filter(i => !done.has(i));
+  job.failed_scenes = missing.length ? missing.map(i => s.agent_numbers?.[i] ?? Number(s.file_stem.match(/\d+/)?.[0] ?? 1) + i) : undefined;
+  job.note = missing.length
+    ? "Hasil Agent tidak lengkap. Tidak ada pengiriman ulang/fallback otomatis. Periksa hasil dan kredit di Chrome sebelum memilih Retry."
+    : `${done.size} of ${scenes.length} scenes came from the agent`;
   step(job, undefined);
-  files.sort();
-  job.note = [
-    // What still needs doing first: the panel shows only the start of a long note.
-    failed.length ? `still failed: scene ${failed.join(", ")} (use Retry)` : "",
-    agentProblem ? `agent mode failed (${agentProblem}), so the images were made one by one` : "",
-    agentTimedOut ? "the agent stalled and was stopped" : "",
-    `${done.size} of ${scenes.length} scenes came from the agent`,
-    s.agent_refs?.length ? `${s.agent_refs.length} reference image(s) attached` : "",
-    agentRetries ? `${agentRetries} asked again` : "",
-    failedTiles ? `${failedTiles} tile(s) failed in Flow` : "",
-    missing.length > failed.length ? `${missing.length - failed.length} re-run one by one` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  if (!files.length) throw new Error("No image could be generated for any scene. Open the Flow tab to see what Flow reported.");
-
+  if (!files.length) throw new FlowUiError("FLOW_AGENT_RESULT_UNCERTAIN", "Agent belum menghasilkan file yang dapat dipastikan.", Boolean(job.submissionAttempted));
+  const left = await readCredits(page).catch(() => undefined);
   if (balance !== undefined && left !== undefined) job.credits = balance - left;
-  return files;
+  return files.sort();
 }

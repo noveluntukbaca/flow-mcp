@@ -12,7 +12,8 @@
     "desktop": "npm run build && electron .",
     "desktop:smoke": "npm run build && node scripts/desktop-smoke.mjs",
     "package:win": "npm run build && electron-builder --win nsis --x64 --publish never",
-    "package:dir": "npm run build && electron-builder --dir --publish never"
+    "package:dir": "npm run build && electron-builder --dir --publish never",
+    "test:flow-ui": "npm run build && node scripts/flow-ui-fixtures.mjs"
   },
   "keywords": [],
   "author": "",
