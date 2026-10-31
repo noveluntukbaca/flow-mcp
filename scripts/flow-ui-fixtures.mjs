@@ -8,9 +8,9 @@ import { _electron } from 'playwright-core';
 const root = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const scratch = mkdtempSync(join(tmpdir(), 'flow-native-fixtures ü '));
 process.env.FLOW_MCP_HOME = join(scratch, 'home'); process.env.FLOW_MCP_OUTPUT = join(scratch, 'output');
-const { NativeCharacterEngine } = await import('../dist/native-character.js');
+const { NativeCharacterEngine, nativeCharacterCard } = await import('../dist/native-character.js');
 const { CharacterStore, characterStore } = await import('../dist/character-store.js');
-const { attachAsset } = await import('../dist/flow.js');
+const { attachAsset, characterNamesOnPage } = await import('../dist/flow.js');
 const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
 let electron;
 try {
@@ -40,7 +40,10 @@ try {
  assert.equal(out.status,'created'); assert.equal(out.name,'Local Fox'); assert.equal(out.flow_name,'Native Result 1');
  assert.equal(await real.evaluate(() => window.sentPrompt),'A red fox\n\nPersonality: Curious');
  assert.equal(await real.evaluate(() => window.uploads),0);
- assert.equal(store.resolve(project,'Local Fox'),'Native Result 1'); assert.equal(store.list(project)[0].voice,'LOCAL_VOICE');
+ assert.equal(store.resolve(project,'Local Fox'),'Native Result 1');
+ assert.equal(await nativeCharacterCard(page,'native-1').count(),1); assert.equal(await nativeCharacterCard(page,'native-1').getAttribute('data-character-id'),'native-1');
+ await real.evaluate(() => { const card = document.createElement('flow-character-tile'); card.setAttribute('aria-label','image fox'); card.textContent='image fox'; document.querySelector('#cards').append(card); });
+ const localList = await characterNamesOnPage(page,store); assert.ok(localList.includes('image fox')); assert.ok(localList.includes('Local Fox')); assert.ok(!localList.includes('Native Result 1')); assert.ok(!localList.includes('New character') && !localList.includes('Create my avatar')); assert.equal(store.list(project)[0].voice,'LOCAL_VOICE');
  await engine.create(page,input); assert.equal(await real.evaluate(() => window.submits),1);
  out = await new NativeCharacterEngine(new CharacterStore(join(scratch,'case-'+caseNumber)),1800).create(page,input);
  assert.equal(out.status,'already_exists'); assert.equal(await real.evaluate(() => window.submits),1);

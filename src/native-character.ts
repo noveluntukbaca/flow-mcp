@@ -127,6 +127,12 @@ async function attachImage(page: Page, view: Composer, image: string, project: s
   await composer(page); // Legacy Upload that immediately creates/navigates is NOT this native attachment workflow.
 }
 
+export function nativeCharacterCard(page: Page, id: string): Locator {
+  const escaped = id.replace(/[\\"\x00-\x1f\x7f]/g, c => `\\${c.codePointAt(0)!.toString(16)} `);
+  return page.locator(`flow-character-tile[data-character-id="${escaped}"]`)
+    .or(page.locator("flow-character-tile").filter({ has: page.locator(`a[href$="/character/${escaped}"], a[href$="/characters/${escaped}"]`) }));
+}
+
 export class NativeCharacterEngine {
   private readonly pending = new Map<string, Pending>();
   private running = false;

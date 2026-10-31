@@ -92,8 +92,9 @@ kartu lama, thumbnail kosong, progress, hasil ganda atau navigasi ke proyek lain
 bukan sukses. Timeout normal hasil maksimal 180 detik.
 
 Setelah berhasil, metadata menyimpan ID/judul native dan nama lokal. `flow_characters`
-menampilkan alias lokal dan referensi `asset:<NAME>`. Pemilihan referensi scene dan
-edit memetakan alias ke judul native; pemilihan asset lokal memakai kecocokan judul
+menampilkan alias lokal dan referensi `asset:<NAME>`, mengabaikan tile New character/
+avatar dan menjaga teks nama aksesibel. Edit alias memilih ID native yang unik;
+pemilihan referensi scene memetakan alias ke judul native; pemilihan asset lokal memakai kecocokan judul
 utuh yang unik, bukan prefix seperti “Result 1” yang dapat salah memilih “Result
 10”. Tidak mengganti nama native tanpa kontrol rename yang terverifikasi.
 

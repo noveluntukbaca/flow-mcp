@@ -7,7 +7,7 @@ window.submits = 0; window.uploads = 0; window.avatarClicks = 0;
 const image = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 window.results = [];
 function showCharacters() {
- document.querySelector('#main').innerHTML = '<h1>Characters</h1><button id="new">New character</button><button id="avatar">Create my avatar</button><div id="cards"></div>';
+ document.querySelector('#main').innerHTML = '<h1>Characters</h1><flow-character-tile aria-label="New character"><button id="new">New character</button></flow-character-tile><flow-character-tile aria-label="Create my avatar"><button id="avatar">Create my avatar</button></flow-character-tile><div id="cards"></div>';
  document.querySelector('#new').onclick = showComposer;
  document.querySelector('#avatar').onclick = () => window.avatarClicks++;
  for (const result of [{id:'old',title:'Existing Hero'}, ...window.results]) {

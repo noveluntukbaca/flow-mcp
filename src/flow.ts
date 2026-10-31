@@ -1,5 +1,5 @@
-import { nativeCharacterEngine, type NativeCharacterInput, type NativeCharacterResult } from "./native-character.js";
-import { characterStore } from "./character-store.js";
+import { nativeCharacterEngine, nativeCharacterCard, type NativeCharacterInput, type NativeCharacterResult } from "./native-character.js";
+import { characterStore, type CharacterStore } from "./character-store.js";
 import { FlowUiError, UI_TIMEOUT, assertProject, projectRoot, openCharacters, setAgentModeCompatible } from "./flow-ui.js";
 import { outputPath, OUTPUT_ROOT } from "./paths.js";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
@@ -897,15 +897,21 @@ export async function listCharacters(): Promise<string[]> {
   await dismissOverlays(page);
   await openCharacters(page);
   await pause(page, 2500);
-  const names = await page.evaluate(() =>
-    [...document.querySelectorAll("flow-character-tile")].map((t) => (t as HTMLElement).innerText.replace(/\s+/g, " ").trim()).filter(Boolean),
-  );
+  const names = await characterNamesOnPage(page);
   await ensureProjectGrid(page).catch(() => {});
-  // Strip Material icon ligatures Flow renders as text ("accessibility_new", "person") and its own avatar.
-  const remote = [...new Set(names.map((n) => n.replace(/\b(accessibility_new|person|movie|image|videocam|mic)\b/g, "").replace(/\s+/g, " ").trim()))].filter(
-    (n) => n && n !== "Me",
-  );
-  const aliases = characterStore.list(assertProject(page)).filter(row => row.state === "ready" && row.flow_name);
+  return names;
+}
+
+export async function characterNamesOnPage(page: Page, store: CharacterStore = characterStore): Promise<string[]> {
+  const project = assertProject(page);
+  const names = await page.evaluate(() => [...document.querySelectorAll("flow-character-tile")].map(t => {
+    const label = t.getAttribute("data-character-name") ?? t.getAttribute("aria-label");
+    // Only legacy text contains icon ligatures. Never strip real words from an accessible character name.
+    return (label ?? (t as HTMLElement).innerText.replace(/\b(accessibility_new|person|movie|image|videocam|mic)\b/g, "")).replace(/\s+/g, " ").trim();
+  }).filter(Boolean));
+  assertProject(page, project);
+  const remote = [...new Set(names)].filter(name => !["Me", "New character", "Create my avatar"].includes(name));
+  const aliases = store.list(project).filter(row => row.state === "ready" && row.flow_name);
   return [...new Set([...remote.filter(name => !aliases.some(row => row.flow_name === name)), ...aliases.map(row => row.name)])];
 }
 
@@ -957,8 +963,11 @@ export async function editCharacter(name: string, change?: string, job?: Job): P
   await openCharacters(page);
   await pause(page, 2500);
 
-  const flowName = characterStore.resolve(assertProject(page), name);
-  const card = page.locator("flow-character-tile").filter({ hasText: flowName }).first();
+  const project = assertProject(page);
+  const identity = characterStore.get(project, name);
+  const flowName = characterStore.resolve(project, name);
+  const card = identity?.flow_id ? nativeCharacterCard(page, identity.flow_id).filter({ visible: true }) : page.locator("flow-character-tile").filter({ hasText: flowName }).first();
+  if (identity && await card.count() !== 1) throw new FlowUiError("FLOW_CHARACTER_REFERENCE_AMBIGUOUS", "ID karakter lokal tidak dapat dipetakan secara unik di Flow. Tidak ada edit otomatis.");
   if (!(await card.isVisible().catch(() => false))) throw new Error(`No character called "${name}". Use flow_characters to list them.`);
   await card.scrollIntoViewIfNeeded();
   const expectedProject = assertProject(page);
