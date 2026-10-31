@@ -1,4 +1,6 @@
-import { FlowUiError, UI_TIMEOUT, assertProject, projectRoot, prepareCharacterCreation, characterUploadControl, openCharacters, setAgentModeCompatible, uniqueVisible } from "./flow-ui.js";
+import { nativeCharacterEngine, nativeCharacterCard, type NativeCharacterInput, type NativeCharacterResult } from "./native-character.js";
+import { characterStore, type CharacterStore } from "./character-store.js";
+import { FlowUiError, UI_TIMEOUT, assertProject, projectRoot, openCharacters, setAgentModeCompatible } from "./flow-ui.js";
 import { outputPath, OUTPUT_ROOT } from "./paths.js";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -416,6 +418,9 @@ const optionByName = (list: Locator, name: string) =>
 // The frame pickers attach on click; the ingredients picker only previews and needs "Add to prompt".
 // Option names are "<asset name>" or "<asset name> Image|Video", so match on the prefix.
 export async function attachAsset(page: Page, opener: Locator, assetName: string): Promise<void> {
+  const project = assertProject(page);
+  const localIdentity = characterStore.get(project, assetName);
+  assetName = characterStore.resolve(project, assetName);
   const list = page.getByRole("listbox", { name: "Asset list" });
   const all = page.getByRole("tab", { name: "All", exact: true });
   const shows = (l: Locator, ms: number) => l.waitFor({ state: "visible", timeout: ms }).then(() => true, () => false);
@@ -439,7 +444,11 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
     await pause(page, 1000);
   }
   await list.waitFor({ state: "visible", timeout: 10_000 });
-  let option = optionByName(list, assetName);
+  const findOption = () => localIdentity
+    ? list.getByRole("option", { name: new RegExp(`^${escapeRe(assetName)}(?: (?:Image|Character|Avatar))?$`, "i") }).filter({ visible: true })
+    : optionByName(list, assetName);
+  let option = findOption();
+  if (localIdentity && await option.count() > 1) throw new FlowUiError("FLOW_CHARACTER_REFERENCE_AMBIGUOUS", "Ada beberapa referensi dengan judul Flow yang sama. Tidak ada pilihan otomatis.");
   // Voices, characters and avatars live behind their own tabs, so look there when "All" does not have it.
   if (!(await option.isVisible().catch(() => false))) {
     for (const tab of ["Voices", "Characters", "Avatars", "Uploads"]) {
@@ -447,7 +456,8 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
       if (!(await t.isVisible().catch(() => false))) continue;
       await t.click();
       await pause(page, 1200);
-      option = optionByName(list, assetName);
+      option = findOption();
+      if (localIdentity && await option.count() > 1) throw new FlowUiError("FLOW_CHARACTER_REFERENCE_AMBIGUOUS", "Judul karakter Flow ambigu. Pilih referensi secara manual.");
       if (await option.isVisible().catch(() => false)) break;
     }
   }
@@ -887,14 +897,22 @@ export async function listCharacters(): Promise<string[]> {
   await dismissOverlays(page);
   await openCharacters(page);
   await pause(page, 2500);
-  const names = await page.evaluate(() =>
-    [...document.querySelectorAll("flow-character-tile")].map((t) => (t as HTMLElement).innerText.replace(/\s+/g, " ").trim()).filter(Boolean),
-  );
+  const names = await characterNamesOnPage(page);
   await ensureProjectGrid(page).catch(() => {});
-  // Strip Material icon ligatures Flow renders as text ("accessibility_new", "person") and its own avatar.
-  return [...new Set(names.map((n) => n.replace(/\b(accessibility_new|person|movie|image|videocam|mic)\b/g, "").replace(/\s+/g, " ").trim()))].filter(
-    (n) => n && n !== "Me",
-  );
+  return names;
+}
+
+export async function characterNamesOnPage(page: Page, store: CharacterStore = characterStore): Promise<string[]> {
+  const project = assertProject(page);
+  const names = await page.evaluate(() => [...document.querySelectorAll("flow-character-tile")].map(t => {
+    const label = t.getAttribute("data-character-name") ?? t.getAttribute("aria-label");
+    // Only legacy text contains icon ligatures. Never strip real words from an accessible character name.
+    return (label ?? (t as HTMLElement).innerText.replace(/\b(accessibility_new|person|movie|image|videocam|mic)\b/g, "")).replace(/\s+/g, " ").trim();
+  }).filter(Boolean));
+  assertProject(page, project);
+  const remote = [...new Set(names)].filter(name => !["Me", "New character", "Create my avatar"].includes(name));
+  const aliases = store.list(project).filter(row => row.state === "ready" && row.flow_name);
+  return [...new Set([...remote.filter(name => !aliases.some(row => row.flow_name === name)), ...aliases.map(row => row.name)])];
 }
 
 // A run that stopped half-way leaves Flow inside a character's editor, where the project navigation is gone. Done keeps
@@ -945,7 +963,11 @@ export async function editCharacter(name: string, change?: string, job?: Job): P
   await openCharacters(page);
   await pause(page, 2500);
 
-  const card = page.locator("flow-character-tile").filter({ hasText: name }).first();
+  const project = assertProject(page);
+  const identity = characterStore.get(project, name);
+  const flowName = characterStore.resolve(project, name);
+  const card = identity?.flow_id ? nativeCharacterCard(page, identity.flow_id).filter({ visible: true }) : page.locator("flow-character-tile").filter({ hasText: flowName }).first();
+  if (identity && await card.count() !== 1) throw new FlowUiError("FLOW_CHARACTER_REFERENCE_AMBIGUOUS", "ID karakter lokal tidak dapat dipetakan secara unik di Flow. Tidak ada edit otomatis.");
   if (!(await card.isVisible().catch(() => false))) throw new Error(`No character called "${name}". Use flow_characters to list them.`);
   await card.scrollIntoViewIfNeeded();
   const expectedProject = assertProject(page);
@@ -1105,14 +1127,7 @@ async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): 
   return [target];
 }
 
-export interface CharacterParams {
-  name: string;
-  image?: string;
-  describe?: string;
-  aspect_ratio?: string;
-  personality?: string;
-  voice?: string;
-}
+export interface CharacterParams extends NativeCharacterInput {}
 
 // Creates a reusable Flow character from an image (local file, or "asset:<title>" already in the project).
 // Afterwards it can be attached to any scene as reference "asset:<character name>".
@@ -1133,130 +1148,14 @@ export function rememberCharacter(name: string, look: string): void {
   writeFileSync(LOOKS_FILE, JSON.stringify(all, null, 2));
 }
 
-export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ name: string; url: string; portrait?: string }> {
+export async function createCharacter(c: CharacterParams): Promise<NativeCharacterResult> {
   const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
-  const page = await getFlowPage();
-  return createCharacterOnPage(page, c, job);
+  if (!state.signedIn || !state.inProject) throw new FlowUiError("FLOW_PROJECT_REQUIRED", "Buka proyek Flow yang benar di Chrome sebelum membuat karakter.");
+  return createCharacterOnPage(await getFlowPage(), c);
 }
 
-// Exposed for offline fixture tests; normal callers always obtain the external Flow tab above.
-export async function createCharacterOnPage(page: Page, c: CharacterParams, job?: Job,
-  drawPortrait: typeof runGeneration = runGeneration): Promise<{ name: string; url: string; portrait?: string; note?: string }> {
-  if (!c.image && !c.describe) throw new FlowUiError("FLOW_CHARACTER_INPUT", "Berikan gambar atau deskripsi karakter.");
-  if (c.image && !c.image.startsWith(ASSET_PREFIX) && !existsSync(c.image)) throw new FlowUiError("FLOW_CHARACTER_IMAGE_MISSING", "File gambar karakter tidak ditemukan.");
-  await dismissOverlays(page);
-  const projectUrl = await prepareCharacterCreation(page, c.image?.startsWith(ASSET_PREFIX) ? "asset" : "image");
-  let submitted = false;
-  let createdUrl: string | undefined;
-  let portrait: string | undefined;
-  try {
-    // Draw only after verifying Characters offers a supported image-based creation path.
-    if (!c.image) {
-      if (!c.describe) throw new FlowUiError("FLOW_CHARACTER_INPUT", "Berikan gambar atau deskripsi karakter.");
-      if (job) job.progress = "drawing the character";
-      const dir = outputPath(join(OUTPUT_ROOT, "_cast"));
-      await page.goto(inEnglish(projectUrl), { waitUntil: "domcontentloaded", timeout: 15_000 });
-      assertProject(page, projectUrl);
-      // A timeout after this call can mean a portrait already exists. Never repeat it automatically.
-      const portraitJob = {
-        ...(job ?? ({ id: "char", status: "running", files: [], attempts: 1, createdAt: "" } as unknown as Job)),
-        files: [],
-        params: {
-          prompt: c.describe,
-          type: "image",
-          max_credits: 0,
-          aspect_ratio: (c.aspect_ratio as "3:4") ?? "3:4",
-          output_dir: dir,
-          file_stem: c.name.replace(/[^\w.-]+/g, "_"),
-        },
-      } as Job;
-      let made: string[];
-      try { made = await drawPortrait(portraitJob); }
-      finally { submitted ||= Boolean(portraitJob.submissionAttempted); }
-      portrait = made[0];
-      submitted ||= Boolean(portrait);
-      if (!portrait) throw new FlowUiError("FLOW_CHARACTER_PORTRAIT_MISSING", "Flow tidak mengembalikan file potret.", true);
-      c = { ...c, image: portrait };
-      assertProject(page, projectUrl);
-      await prepareCharacterCreation(page, "image");
-    }
-    const image = c.image!;
-    await dismissOverlays(page);
-    await scrollToTop(page);
-
-    assertProject(page, projectUrl);
-
-    if (image.startsWith(ASSET_PREFIX)) {
-      const title = image.slice(ASSET_PREFIX.length).trim();
-      const add = await uniqueVisible(page.getByRole("button", { name: /^(Add from project|Tambahkan dari proyek)$/i }), "gambar proyek");
-      if (!add) throw new FlowUiError("FLOW_CHARACTER_ASSET_UNAVAILABLE", "Pemilih gambar proyek tidak tersedia.");
-      await add.click({ timeout: UI_TIMEOUT });
-      const list = page.getByRole("listbox", { name: "Asset list" });
-      await list.waitFor({ state: "visible", timeout: 10_000 });
-      let option = optionByName(list, title);
-      if (!(await option.isVisible().catch(() => false))) {
-        await page.getByRole("tab", { name: "Uploads" }).click({ timeout: UI_TIMEOUT });
-        await pause(page, 1000);
-        option = optionByName(list, title);
-      }
-      if (!(await option.isVisible().catch(() => false))) {
-        await page.keyboard.press("Escape");
-        throw new FlowUiError("FLOW_CHARACTER_ASSET_MISSING", "Gambar yang dipilih tidak ditemukan dalam proyek. Periksa judul melalui flow_assets.");
-      }
-      await option.click({ timeout: UI_TIMEOUT });
-      submitted = true;
-      await page.getByRole("button", { name: "Add media", exact: true }).click({ timeout: UI_TIMEOUT });
-    } else {
-      if (!existsSync(image)) throw new Error(`File not found: ${image}`);
-      const upload = await characterUploadControl(page);
-      const [chooser] = await Promise.all([
-        page.waitForEvent("filechooser", { timeout: UI_TIMEOUT }),
-        upload.click({ timeout: UI_TIMEOUT }),
-      ]);
-      submitted = true;
-      await chooser.setFiles(image, { timeout: UI_TIMEOUT });
-    }
-    await page.waitForURL(url => projectRoot(url.href) === projectUrl && /\/characters?\/(?!new\/?$|create\/?$)[^/]+\/?$/.test(url.pathname), { timeout: 30_000 });
-    const url = page.url();
-    createdUrl = url;
-
-    const name = page.getByRole("textbox", { name: /^(Character name|Nama karakter)$/i });
-    await name.waitFor({ state: "visible", timeout: UI_TIMEOUT });
-    await name.fill(c.name, { timeout: UI_TIMEOUT });
-    await name.press("Enter", { timeout: UI_TIMEOUT });
-    if (c.personality) await page.getByRole("textbox", { name: "Character personality" }).fill(c.personality, { timeout: UI_TIMEOUT });
-
-    if (c.voice) {
-      await page.getByRole("button", { name: "Select a voice" }).click({ timeout: UI_TIMEOUT });
-      const voices = page.getByRole("listbox", { name: "Asset list" });
-      await voices.waitFor({ state: "visible", timeout: 10_000 });
-      const option = optionByName(voices, c.voice);
-      if (!(await option.isVisible().catch(() => false))) {
-        const available = (await voices.getByRole("option").allInnerTexts()).map((t) => t.split("\n").filter((l) => l && l !== "voice_selection").join(" - "));
-        await page.getByRole("dialog").getByRole("button", { name: "Close" }).click({ timeout: UI_TIMEOUT });
-        throw new FlowUiError("FLOW_CHARACTER_VOICE_MISSING", `Karakter sudah dibuat, tetapi suara yang dipilih tidak tersedia. Pilih suara yang tersedia atau edit secara manual. Pilihan: ${available.join("; ")}`, true);
-      }
-      await option.click({ timeout: UI_TIMEOUT });
-      // "Customize performance" would turn this into generating a new voice (preview + save); stock voices only.
-      await page.getByRole("button", { name: "Add to character", exact: true }).click({ timeout: UI_TIMEOUT });
-      await pause(page, 1000);
-    }
-
-    // Flow labels this "Done editing" or just "Done" depending on the panel state.
-    await page.getByRole("button", { name: /^Done( editing)?$/ }).first().click({ timeout: UI_TIMEOUT });
-    await page.waitForURL((u) => projectRoot(u.href) === projectUrl && !/\/characters?(\/|$)/.test(u.pathname), { timeout: 10_000 });
-    await pause(page, 1000);
-    // Flow drops the new character into the composer; leave the composer empty for the next job.
-    const clear = page.getByRole("button", { name: "Clear prompt" });
-    if (await clear.isVisible().catch(() => false)) await clear.click();
-    await showAllMedia(page);
-    if (c.describe) rememberCharacter(c.name, c.describe);
-    return { name: c.name, url, portrait };
-  } catch (error) {
-    const detail = error instanceof FlowUiError ? error.detail : "Kontrol karakter tidak tersedia, navigasi berubah, atau Flow melewati batas waktu.";
-    throw new FlowUiError("FLOW_CHARACTER_INCOMPLETE", `${detail}${portrait ? ` Potret sudah tersedia di ${portrait}; gunakan gambar itu untuk melanjutkan, jangan menggambar ulang.` : ""}${createdUrl ? " Karakter mungkin sudah dibuat; periksa Characters dan gunakan Reload sebelum mencoba lagi." : ""}`, submitted);
-  }
+export async function createCharacterOnPage(page: Page, c: CharacterParams): Promise<NativeCharacterResult> {
+  return nativeCharacterEngine.create(page, c);
 }
 
 const EDIT_TIMEOUT_MS = 10 * 60_000;

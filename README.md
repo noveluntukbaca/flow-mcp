@@ -195,10 +195,10 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_assets` | List images and videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating. Free, including the 1080p / 2K upscale. A scene comes down as one stitched film |
 | `flow_trash` | Move an image, video or scene in the Flow project to Flow's Trash, where it can be restored. Exact title only; refuses if two items share it; never deletes permanently |
-| `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s), 0 credits. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Scenes the agent drops are re-asked of it (up to 2 rounds), then re-run one by one. `references` attaches characters, places and objects once in the agent's composer (like its + button), and `scene_references` says which scenes use which, so a whole story stays on-model; scenes made one by one keep their references |
+| `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s historically); current availability/cost depend on Flow. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Incomplete/ambiguous Agent results are not automatically resubmitted; inspect results and credits before manual Retry. `references` attaches characters, places and objects once in the agent's composer (like its + button), and `scene_references` says which scenes use which, so a whole story stays on-model; scenes made one by one keep their references |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). Flow shows no quote first; about 20 credits for a 4 s clip |
 | `flow_continue` | Start a clip from the last frame of an existing one **with a character or your avatar still attached**. The composer allows a start frame or attached characters, never both, so this drives Flow's agent mode, which does both. No quote beforehand |
-| `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with a personality and a stock voice; use it as `asset:<name>` |
+| `flow_character` | Create through the native character composer, text-only or explicit image-assisted. Personality joins the prompt; name/voice remain local. Verified pricing is required; positive cost needs explicit confirmation. Use the local identity as `asset:<name>` |
 | `flow_character_edit` | Restyle an existing character in place (free) and save the new portrait; name, personality and voice are kept, so every scene referencing it updates. Pass `look` with the updated description; with only a name it re-saves the current portrait |
 | `flow_characters` | List the project's characters |
 | `flow_techniques` | 39 film-technique prompt presets (camera moves, product shots, transitions, image commands); pass an id as a scene's `technique` |
@@ -297,8 +297,11 @@ suite and `npm run desktop:smoke` use no Google services or credits.
 publishing. Installer compatibility and signing remain unvalidated. See
 [Windows desktop installation, security and testing](docs/DESKTOP_WINDOWS.md).
 
-If CREATE CHARACTER fails while waiting for an `Agent` button, see
-[Flow character UI compatibility and offline fixtures](docs/FLOW_CHARACTER_COMPATIBILITY.md).
-Ordinary image/character creation no longer requires Agent when the standard
-composer is recognised. Unsupported native forms stop with a clear message;
-failed or ambiguous submitted generations are not automatically resubmitted.
+Native CREATE CHARACTER now uses Characters → New character → the
+`Describe your character...` composer (Nano Banana 2.1), with text or an explicitly
+selected image. Positive pricing requires a separate user confirmation; unknown
+pricing blocks submission. Local names/voice preferences stay local, and a durable
+submit ledger prevents ambiguous retries after restart. See
+[native composer support, pricing and Windows validation](docs/NATIVE_CHARACTER_COMPOSER.md).
+The [prior compatibility report](docs/FLOW_CHARACTER_COMPATIBILITY.md) records the
+original missing-Agent failure; its separate portrait path is superseded.
